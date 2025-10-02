@@ -132,7 +132,8 @@ class Bronkhost(QMainWindow):
             return  # Stop initialization
 
         super(Bronkhost, self).__init__(parent)
-        self.connection_successful = False
+        #Here debug
+        self.connection_successful = True
         p = pathlib.Path(__file__)
         sepa = os.sep
         self.win = uic.loadUi('flow.ui', self)
@@ -206,15 +207,39 @@ class Bronkhost(QMainWindow):
         if hasattr(self.win, 'plotButton'):
             self.win.plotButton.clicked.connect(self.show_plot_window)
 
-
+        if hasattr(self.win, 'admin_button'):
+            self.win.admin_button.clicked.connect(self.open_admin_panel)
+            print("Admin button connected successfully.")  # Add this for debugging
         else:
-            print("Warning: Could not find 'plotButton' in the UI. Plotting window will be unavailable.")
+            print("ERROR: Could not find 'admin_button' in the UI file.")
+
 
         if hasattr(self.win, 'set_pid_button'):
             self.win.set_pid_button.clicked.connect(self.set_pid_parameters)
         else:
             print("Warning: PID control widgets not found in UI. PID functionality disabled.")
 
+    def open_admin_panel(self):
+        # The correct password
+        CORRECT_PASSWORD = "1234"
+
+        # Pop up the password dialog
+        password, ok = QInputDialog.getText(self,
+                                            "Admin Access",
+                                            "Enter Password:",
+                                            QLineEdit.Password)  # This hides the text
+
+        # Check if the user clicked "OK" and if the password is correct
+        if ok and password == CORRECT_PASSWORD:
+            print("Password correct. Opening admin panel.")
+
+            # We store the window as an attribute of the main class
+            # to prevent it from being garbage collected and disappearing.
+            self.admin_w = AdminWindow(self)
+            self.admin_w.show()
+
+        elif ok:  # If they clicked OK but the password was wrong
+            QMessageBox.warning(self, "Access Denied", "Incorrect password.")
     def run_parameter_check(self):
 
             instrument = self.instrument
