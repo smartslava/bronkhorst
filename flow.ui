@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>genral</class>
- <widget class="QMainWindow" name="genral">
+ <class>Main</class>
+ <widget class="QMainWindow" name="Main">
   <property name="geometry">
    <rect>
     <x>0</x>
     <y>0</y>
     <width>382</width>
-    <height>439</height>
+    <height>563</height>
    </rect>
   </property>
   <property name="font">
@@ -22,7 +22,7 @@
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QGridLayout" name="gridLayout">
-    <item row="0" column="0">
+    <item row="1" column="0">
      <layout class="QVBoxLayout" name="verticalLayout_2">
       <property name="spacing">
        <number>6</number>
@@ -117,6 +117,32 @@
            </property>
           </widget>
          </item>
+         <item>
+          <widget class="QPushButton" name="help_button">
+           <property name="minimumSize">
+            <size>
+             <width>10</width>
+             <height>10</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>30</width>
+             <height>30</height>
+            </size>
+           </property>
+           <property name="font">
+            <font>
+             <pointsize>12</pointsize>
+             <weight>75</weight>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="text">
+            <string>?</string>
+           </property>
+          </widget>
+         </item>
         </layout>
        </widget>
       </item>
@@ -137,8 +163,18 @@
           <height>300</height>
          </size>
         </property>
+        <property name="font">
+         <font>
+          <pointsize>10</pointsize>
+          <weight>75</weight>
+          <bold>true</bold>
+         </font>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QGroupBox::title {color: rgba(156, 162, 149, 1.0); }</string>
+        </property>
         <property name="title">
-         <string/>
+         <string>Monitors</string>
         </property>
         <layout class="QGridLayout" name="gridLayout_3">
          <property name="leftMargin">
@@ -236,11 +272,11 @@
             </font>
            </property>
            <property name="text">
-            <string>Actual P (Bars):</string>
+            <string>Actual P (bar):</string>
            </property>
           </widget>
          </item>
-         <item row="1" column="1" alignment="Qt::AlignLeft">
+         <item row="1" column="1" alignment="Qt::AlignHCenter">
           <widget class="QLabel" name="inlet_valve_label">
            <property name="font">
             <font>
@@ -254,7 +290,7 @@
            </property>
           </widget>
          </item>
-         <item row="0" column="1" alignment="Qt::AlignLeft">
+         <item row="0" column="1" alignment="Qt::AlignHCenter">
           <widget class="QLabel" name="label_valve_status">
            <property name="maximumSize">
             <size>
@@ -274,7 +310,7 @@
            </property>
           </widget>
          </item>
-         <item row="2" column="1">
+         <item row="2" column="1" alignment="Qt::AlignHCenter">
           <widget class="QLabel" name="measure">
            <property name="minimumSize">
             <size>
@@ -303,7 +339,7 @@
            </property>
           </widget>
          </item>
-         <item row="3" column="1">
+         <item row="3" column="1" alignment="Qt::AlignHCenter">
           <widget class="QPushButton" name="plotButton">
            <property name="minimumSize">
             <size>
@@ -340,8 +376,18 @@
           <height>300</height>
          </size>
         </property>
+        <property name="font">
+         <font>
+          <pointsize>10</pointsize>
+          <weight>75</weight>
+          <bold>true</bold>
+         </font>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QGroupBox::title {color: rgba(156, 162, 149, 1.0); }</string>
+        </property>
         <property name="title">
-         <string/>
+         <string>Controls</string>
         </property>
         <layout class="QGridLayout" name="gridLayout_2">
          <property name="leftMargin">
@@ -373,7 +419,7 @@
            </property>
           </widget>
          </item>
-         <item row="0" column="1">
+         <item row="0" column="1" alignment="Qt::AlignHCenter">
           <widget class="EnterSpinBox" name="setpoint">
            <property name="minimumSize">
             <size>
@@ -399,7 +445,7 @@
            </property>
           </widget>
          </item>
-         <item row="1" column="1">
+         <item row="1" column="1" alignment="Qt::AlignHCenter">
           <widget class="QPushButton" name="openButton">
            <property name="sizePolicy">
             <sizepolicy hsizetype="Minimum" vsizetype="Expanding">
@@ -409,7 +455,7 @@
            </property>
            <property name="minimumSize">
             <size>
-             <width>80</width>
+             <width>90</width>
              <height>35</height>
             </size>
            </property>
@@ -453,11 +499,11 @@
             </font>
            </property>
            <property name="text">
-            <string>P Set (Bars):</string>
+            <string>P Set (bar):</string>
            </property>
           </widget>
          </item>
-         <item row="1" column="2">
+         <item row="1" column="2" alignment="Qt::AlignHCenter">
           <widget class="QPushButton" name="closeButton">
            <property name="sizePolicy">
             <sizepolicy hsizetype="Minimum" vsizetype="Expanding">
@@ -506,6 +552,41 @@
            </property>
            <property name="text">
             <string>Advanced</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QGroupBox" name="groupBox_2">
+        <property name="font">
+         <font>
+          <pointsize>10</pointsize>
+          <weight>75</weight>
+          <bold>true</bold>
+         </font>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QGroupBox::title {color: rgba(156, 162, 149, 1.0); }</string>
+        </property>
+        <property name="title">
+         <string>Log Display</string>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout">
+         <item>
+          <widget class="QTextEdit" name="log_display">
+           <property name="styleSheet">
+            <string notr="true">color: rgba(156, 162, 149, 1.0);border: none;</string>
+           </property>
+           <property name="frameShape">
+            <enum>QFrame::NoFrame</enum>
+           </property>
+           <property name="frameShadow">
+            <enum>QFrame::Plain</enum>
+           </property>
+           <property name="readOnly">
+            <bool>true</bool>
            </property>
           </widget>
          </item>

@@ -4,10 +4,11 @@ Created on Wed Jun 21 15:26:36 2023
 
 @author: SALLEJAUNE
 """
-
+from admin_window import AdminWindow
+from help_window import HelpWindow
 import propar
 from PyQt5 import QtCore, uic
-from PyQt5.QtWidgets import QApplication, QWidget, QMainWindow, QInputDialog, QMessageBox
+from PyQt5.QtWidgets import QApplication, QWidget, QMainWindow, QInputDialog, QMessageBox, QLineEdit
 from PyQt5.QtGui import QIcon
 import sys
 import time
@@ -15,9 +16,10 @@ import qdarkstyle
 from PyQt5.QtCore import Qt
 import pathlib, os
 from collections import deque
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+# --- Auto-detect COM ports ---
 
-# --- New Feature: Auto-detect COM ports ---
-# This requires the pyserial library. We'll check if it's installed.
 try:
     import serial.tools.list_ports
 except ImportError:
@@ -36,8 +38,7 @@ except ImportError:
     error_box.exec_()
     sys.exit(1)
 
-# --- New Feature: Real-time plotting ---
-# This requires the pyqtgraph library.
+# --- Real-time plotting ---
 try:
     import pyqtgraph as pg
 except ImportError:
@@ -55,6 +56,18 @@ except ImportError:
     sys.exit(1)
 from PyQt5.QtWidgets import QDoubleSpinBox
 from PyQt5.QtCore import Qt, QTimer
+
+
+class Stream(QtCore.QObject):
+    """Redirects console output to a QTextEdit widget."""
+    new_text = QtCore.pyqtSignal(str)
+
+    def write(self, text):
+        self.new_text.emit(str(text))
+
+    def flush(self):
+        # This is needed for compatibility.
+        pass
 
 class EnterSpinBox(QDoubleSpinBox):
     """
@@ -88,9 +101,9 @@ class PlotWindow(QMainWindow):
 
         # Styling the plot
         self.graphWidget.setBackground('k')
-        self.graphWidget.setTitle("Pressure Reading (%)", color="w", size="15pt")
+        self.graphWidget.setTitle("Pressure Reading (bar)", color="w", size="15pt")
         styles = {'color': 'w', 'font-size': '12pt'}
-        self.graphWidget.setLabel('left', 'Pressure (%)', **styles)
+        self.graphWidget.setLabel('left', 'Pressure (bar)', **styles)
         self.graphWidget.setLabel('bottom', 'Time (s)', **styles)
         self.graphWidget.showGrid(x=True, y=True)
         self.graphWidget.getAxis('bottom').setPen('w')
@@ -133,10 +146,19 @@ class Bronkhost(QMainWindow):
 
         super(Bronkhost, self).__init__(parent)
         #Here debug
-        self.connection_successful = True
+        self.connection_successful = False
         p = pathlib.Path(__file__)
         sepa = os.sep
         self.win = uic.loadUi('flow.ui', self)
+
+        # --- REDIRECT PRINT STATEMENTS ---
+        # 1. Create an instance of our custom stream
+        self.log_stream = Stream()
+        # 2. Connect the stream's signal to our update function
+        self.log_stream.new_text.connect(self.update_log)
+        # 3. Redirect Python's standard output to our custom stream
+        sys.stdout = self.log_stream
+        # ------------------------------------
         try:
             self.instrument = propar.instrument(com)
             device_serial = self.instrument.readParameter(1)  # Try to read the serial number
@@ -162,7 +184,7 @@ class Bronkhost(QMainWindow):
 
         # Set valve to closed on startup
         self.instrument.writeParameter(12, 3)
-        self.win.label_valve_status.setText('Valve Closed')
+        self.win.label_valve_status.setText('Closed')
 
         # --- Initialize valve opening displays ---
         self.update_inlet_valve_display(0.0)
@@ -175,8 +197,7 @@ class Bronkhost(QMainWindow):
         self.unit = ""
         self.read_device_info()
 
-        # --- Read initial PID settings from device ---
-        self.read_pid_parameters()
+
         # Read initial setpoint from device and update UI ---
         self.read_initial_setpoint()
         self.threadFlow = THREADFlow(self, capacity=self.capacity)
@@ -191,37 +212,33 @@ class Bronkhost(QMainWindow):
 
         self.win.title_2.setText('Pressure Control')
 
+    def update_log(self, text):
+        """Appends text to the QTextEdit."""
+        cursor = self.win.log_display.textCursor()
+        cursor.movePosition(cursor.End)
+        cursor.insertText(text)
+        self.win.log_display.setTextCursor(cursor)
+        self.win.log_display.ensureCursorVisible()
+
     def actionButton(self):
         self.win.openButton.clicked.connect(self.valve_PID)
         self.win.closeButton.clicked.connect(self.valve_close)
         self.win.setpoint.editingFinished.connect(self.setPoint)
 
 
-        if hasattr(self.win, 'force_open_button'):
-            self.win.force_open_button.clicked.connect(self.valve_force_open)
-        else:
-            print("Warning: Could not find 'force_open_button' in UI. Manual override disabled.")
-        if hasattr(self.win, 'scan_params'):
-            self.win.scan_params.clicked.connect(self.run_parameter_check)
-
         if hasattr(self.win, 'plotButton'):
             self.win.plotButton.clicked.connect(self.show_plot_window)
 
         if hasattr(self.win, 'admin_button'):
             self.win.admin_button.clicked.connect(self.open_admin_panel)
-            print("Admin button connected successfully.")  # Add this for debugging
-        else:
-            print("ERROR: Could not find 'admin_button' in the UI file.")
 
+        if hasattr(self.win, 'help_button'):
+            self.win.help_button.clicked.connect(self.show_help_window)
 
-        if hasattr(self.win, 'set_pid_button'):
-            self.win.set_pid_button.clicked.connect(self.set_pid_parameters)
-        else:
-            print("Warning: PID control widgets not found in UI. PID functionality disabled.")
 
     def open_admin_panel(self):
         # The correct password
-        CORRECT_PASSWORD = "1234"
+        CORRECT_PASSWORD = "123"
 
         # Pop up the password dialog
         password, ok = QInputDialog.getText(self,
@@ -240,63 +257,6 @@ class Bronkhost(QMainWindow):
 
         elif ok:  # If they clicked OK but the password was wrong
             QMessageBox.warning(self, "Access Denied", "Incorrect password.")
-    def run_parameter_check(self):
-
-            instrument = self.instrument
-            print(f"Successfully connected to {selected_port}.")
-
-            # 4. NEW STRATEGY: Iterate through all possible parameter numbers (0-255)
-            # and see which ones return a value. This is a robust way to find active parameters.
-
-            print("\n--- Scanning for Active Parameters (0-255) ---")
-            print(f"{'#':<10} | {'Current Value'}")
-            print("-" * 30)
-
-            found_params = 0
-            for param_number in range(400):
-                try:
-                    # Read the current value directly from the device.
-                    value = instrument.readParameter(param_number)
-
-                    # If the instrument returns a value (not None), it's an active parameter.
-                    if value is not None:
-                        print(f"{param_number:<10} | {value}")
-                        found_params += 1
-
-                except Exception as e:
-                    # This can happen on some parameters, we can ignore it.
-                    # print(f"Error reading parameter {param_number}: {e}")
-                    pass
-
-            print("-" * 30)
-            print(f"Scan complete. Found {found_params} active parameters.")
-
-            # --- NEW: Get specific device info for calculating absolute value ---
-            print("\n--- Key Device Information ---")
-
-            # Parameter 21 is typically 'Capacity' (the max value of the instrument's range)
-            try:
-                capacity = instrument.readParameter(21)
-                if capacity is not None:
-                    print(f"Max Value (Capacity) [Parameter 21]: {capacity}")
-                else:
-                    print("Could not read Capacity (Parameter 21).")
-            except Exception as e:
-                print(f"Error reading Parameter 21: {e}")
-
-            # Parameter 129 is often the unit string
-            try:
-                unit = instrument.readParameter(129)
-                if unit is not None:
-                    print(f"Programmed Unit [Parameter 129]:      {unit}")
-                else:
-                    print("Could not read Unit (Parameter 129).")
-            except Exception as e:
-                print(f"Error reading Parameter 129: {e}")
-
-            print("\nTo calculate the absolute value, use the formula:")
-            print("Absolute Value = (Measure [Param 8] / 32000) * Max Value")
-            print("---------------------------------")
 
     def read_device_info(self):
         """Reads the capacity and unit from the instrument to calculate absolute values."""
@@ -328,54 +288,7 @@ class Bronkhost(QMainWindow):
         except Exception as e:
             print(f"Error reading device info: {e}")
 
-    def read_pid_parameters(self):
-        """Reads the current PID values from the instrument and updates the UI."""
-        if not all(hasattr(self.win, w) for w in ['p_gain_box', 'i_gain_box', 'd_gain_box']):
-            return  # Exit if the UI widgets don't exist
-        try:
-            # CORRECTED PID parameter numbers for this device model
-            p_gain = self.instrument.readParameter(167)
-            i_gain = self.instrument.readParameter(168)
-            d_gain = self.instrument.readParameter(169)
 
-            # Check if the returned value is not None before setting it in the UI
-            if p_gain is not None:
-                self.win.p_gain_box.setValue(p_gain)
-            else:
-                print("Warning: Failed to read P-gain parameter from instrument.")
-
-            if i_gain is not None:
-                self.win.i_gain_box.setValue(i_gain)
-            else:
-                print("Warning: Failed to read I-gain parameter from instrument.")
-
-            if d_gain is not None:
-                self.win.d_gain_box.setValue(d_gain)
-            else:
-                print("Warning: Failed to read D-gain parameter from instrument.")
-
-            print(f"Read PID values: P={p_gain}, I={i_gain}, D={d_gain}")
-        except Exception as e:
-            print(f"Error reading PID parameters: {e}")
-
-    def set_pid_parameters(self):
-        """Writes the PID values from the UI to the instrument."""
-        if not all(hasattr(self.win, w) for w in ['p_gain_box', 'i_gain_box', 'd_gain_box']):
-            return  # Exit if the UI widgets don't exist
-        try:
-            p_gain = self.win.p_gain_box.value()
-            i_gain = self.win.i_gain_box.value()
-            d_gain = self.win.d_gain_box.value()
-
-            # CORRECTED PID parameter numbers
-            self.instrument.writeParameter(167, p_gain)  # Set P-action
-            self.instrument.writeParameter(168, i_gain)  # Set I-action
-            self.instrument.writeParameter(169, d_gain)  # Set D-action
-
-            print(f"Set new PID values: P={p_gain}, I={i_gain}, D={d_gain}")
-            QMessageBox.information(self, "Success", "PID parameters have been updated.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to set PID parameters.\n\nError: {e}")
 
     def read_initial_setpoint(self):
         raw_setpoint = self.instrument.readParameter(9)
@@ -390,21 +303,15 @@ class Bronkhost(QMainWindow):
         self.plot_window.show()
 
 
-    def valve_force_open(self):
-        print("Valve force opened")
-        self.win.label_valve_status.setText('Force Opened')
-        self.win.force_open_button.setStyleSheet("background-color: red")
-        self.win.openButton.setStyleSheet("background-color: gray")
-        self.win.closeButton.setStyleSheet("background-color: gray")
-        self.instrument.writeParameter(12, 8)  # 'Valve Forced Open' command
-        self.valve_status = "force_open"
+
 
     def valve_PID(self):
         print('Valve PID controlled')
-        self.win.label_valve_status.setText('PID controlled')
+        self.win.label_valve_status.setText('PID')
         self.win.openButton.setStyleSheet("background-color: green")
         self.win.closeButton.setStyleSheet("background-color: gray")
-        self.win.force_open_button.setStyleSheet("background-color: gray;")
+        if hasattr(self, 'admin_w') and self.admin_w.isVisible():
+            self.admin_w.force_open_button.setStyleSheet("background-color: gray;")
         self.instrument.writeParameter(12, 0)  # 'PID Control' command
         self.valve_status = "PID"
         #self.win.measure.setStyleSheet("color: white")
@@ -414,7 +321,8 @@ class Bronkhost(QMainWindow):
         self.win.label_valve_status.setText('Closed')
         self.win.closeButton.setStyleSheet("background-color: red")
         self.win.openButton.setStyleSheet("background-color: gray")
-        self.win.force_open_button.setStyleSheet("background-color: gray;")
+        if hasattr(self, 'admin_w') and self.admin_w.isVisible():
+            self.admin_w.force_open_button.setStyleSheet("background-color: gray;")
         self.instrument.writeParameter(12, 3)  # 'Valve Closed' command
         self.valve_status = "closed"
         #self.win.measure.setStyleSheet("color: red")
@@ -476,6 +384,10 @@ class Bronkhost(QMainWindow):
 
         if hasattr(self, 'plot_window'):
             self.plot_window.close()
+        if hasattr(self, 'help_w') and self.help_w.isVisible():
+            self.help_w.close()
+        if hasattr(self, 'admin_w') and self.admin_w.isVisible():
+            self.admin_w.close()
 
         if hasattr(self, 'threadFlow'):
             self.threadFlow.stopThread()
@@ -504,6 +416,29 @@ class Bronkhost(QMainWindow):
         propar_float = (bar_value / capacity) * 32000.0
         return int(max(0.0, min(32000.0, propar_float)))
 
+    def show_help_window(self):
+        """
+        Creates and shows an independent help window.
+        """
+        if not hasattr(self, 'help_w') or not self.help_w:
+            # --- FIX: Pass None as the parent to make it an independent window ---
+            self.help_w = HelpWindow(None)
+
+        # Show the window (non-modal)
+        self.help_w.show()
+
+        # Get the geometry (size and position) of the main window
+        main_geo = self.geometry()
+        # Get the coordinate of the main window's top-right corner
+        top_right_point = main_geo.topRight()
+        # Move the help window to that point
+        self.help_w.move(top_right_point)
+
+        self.help_w.activateWindow()
+
+
+
+
 class THREADFlow(QtCore.QThread):
     MEAS = QtCore.pyqtSignal(float)
     VALVE1_MEAS = QtCore.pyqtSignal(float)  # Signal for inlet valve (param 11)
@@ -513,16 +448,19 @@ class THREADFlow(QtCore.QThread):
         super(THREADFlow, self).__init__(parent)
         self.parent = parent
         self.instrument = self.parent.instrument
+        self.propar_to_bar_func = self.parent.propar_to_bar
+        self.capacity = capacity
         self.stop = False
 
     def run(self):
         while not self.stop:
             try:
                 # Read pressure measurement
-                measure_value = float(self.instrument.readParameter(8) * 100 / 32000)
-                # Use fMeasure for direct reading
-                #measure_value = float(self.instrument.readParameter(205))
-                self.MEAS.emit(measure_value)
+                raw_measure = self.instrument.readParameter(8)
+
+                # --- FIX: Convert the raw value directly to bar ---
+                bar_measure = self.propar_to_bar_func(raw_measure, self.capacity)
+                self.MEAS.emit(bar_measure)
 
                 # Read inlet valve output
                 valve1_output = self.instrument.readParameter(55)
@@ -563,7 +501,7 @@ if __name__ == '__main__':
         if ok and selected_port:
             print(f"Attempting to connect to {selected_port}...")
             # Create a temporary instance to check the connection
-            main_window = Bronkhost(com=selected_port)
+            main_window = Bronkhost(com=selected_port,name="LOA Pressure Control")
 
             # Check the flag we created. If it's True, the connection worked.
             if main_window.connection_successful:
