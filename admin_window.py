@@ -10,6 +10,23 @@ class AdminWindow(QMainWindow):
         # Store a reference to the main window to access the instrument
         self.main_window = parent
 
+        # --- Set tooltips for parameter explanations ---
+        self.p_gain_box.setToolTip(
+            "<b>Proportional Gain (Kp)</b><br>Proportional action, multiplication factor. (float:0...1e+10) Default: 2000")
+        self.i_gain_box.setToolTip(
+            "<b>Integral Gain (Ti)</b><br>Integration action in seconds. (float:0...1e+10) Default: 0.25")
+        self.d_gain_box.setToolTip(
+            "<b>Derivative Gain (Td)</b><br>Differentiation action in seconds. (float:0...1e+10) Default: 0.0")
+        self.speed_gain_box.setToolTip(
+            "<b>Controller Speed (Kspeed)</b><br>Controller speed factor. PID-Kp is multiplied by this factor (float:0...3.40282E+38). Default: 1.0")
+        self.open_gain_box.setToolTip(
+            "<b>Open from Zero Response (Kopen)</b><br>Controller response when starting-up from 0%. Kopen, Kp multiplication factor when valve opens. Value 128 means no correction. Otherwise controller speed will be adjusted by a factor 1.05^(128-Kopen) (int:0...255). Default: 128")
+        self.norm_gain_box.setToolTip(
+            "<b>Normal Step Response (Knorm)</b><br>Controller response during normal control. Knormal, Kp multiplication factor at setpoint step. Value 128 means no correction. Otherwise controller speed will be adjusted by a factor 1.05^(128-Knorm) (int:0...255). Default: 128")
+        self.stab_gain_box.setToolTip(
+            "<b>Stable Response (Kstab)</b><br>Controller response when controller is stable. Kstable, Kp multiplication factor within band of 2%. Value 128 means no correction. Otherwise controller speed will be adjusted by a factor 1.05^(128-Kstab) (int:0...255). Default: 128")
+        self.hyster_gain_box.setToolTip(
+            "<b>Controller Hysteresis</b><br>Defines a pressure band around the setpoint where both control valves stay closed. This state becomes active when the setpoint is reached and remains active as long as the measured pressure remains within the specified bandwidth. The supported value range 0 to 1.0 corresponds with (0 to 100%) of the setpoint range. (float:0...1) Default: 0.001 (0.1%).")
         # Connect the button (which is now in this window's UI)
         if hasattr(self, 'set_pid_button'):
             self.set_pid_button.clicked.connect(self.set_pid_parameters)
@@ -28,6 +45,11 @@ class AdminWindow(QMainWindow):
             p_gain = instrument.readParameter(167)
             i_gain = instrument.readParameter(168)
             d_gain = instrument.readParameter(169)
+            speed_gain = instrument.readParameter(254)
+            open_gain = instrument.readParameter(165)
+            norm_gain = instrument.readParameter(72)
+            stab_gain = instrument.readParameter(141)
+            hyster_gain = instrument.readParameter(361)
 
             if p_gain is not None:
                 self.p_gain_box.setValue(p_gain)
@@ -35,10 +57,22 @@ class AdminWindow(QMainWindow):
                 self.i_gain_box.setValue(i_gain)
             if d_gain is not None:
                 self.d_gain_box.setValue(d_gain)
+            if speed_gain is not None:
+                self.speed_gain_box.setValue(speed_gain)
+            if open_gain is not None:
+                self.open_gain_box.setValue(open_gain)
+            if norm_gain is not None:
+                self.norm_gain_box.setValue(norm_gain)
+            if stab_gain is not None:
+                self.stab_gain_box.setValue(stab_gain)
+            if hyster_gain is not None:
+                self.hyster_gain_box.setValue(hyster_gain)
 
-            print(f"Read PID values into admin panel: P={p_gain}, I={i_gain}, D={d_gain}")
+
+
+            print(f"Read valve control parameters: Kp={p_gain}, Ti={i_gain}, Td={d_gain}, Kspeed={speed_gain},Kopen={open_gain}, Knormal={norm_gain},Kstable={stab_gain},Hysteresis={hyster_gain}")
         except Exception as e:
-            print(f"Error reading PID parameters in admin panel: {e}")
+            print(f"Error reading valve control parameters: {e}")
 
     def set_pid_parameters(self):
         """Attempts a full sequence to unlock, write, and save new PID values."""
@@ -47,36 +81,41 @@ class AdminWindow(QMainWindow):
             p_gain = self.p_gain_box.value()
             i_gain = self.i_gain_box.value()
             d_gain = self.d_gain_box.value()
+            speed_gain = self.speed_gain_box.value()
+            open_gain = self.open_gain_box.value()
+            norm_gain = self.norm_gain_box.value()
+            stab_gain = self.stab_gain_box.value()
+            hyster_gain = self.hyster_gain_box.value()
 
-            print("--- Attempting final save sequence ---")
+            print("--- Attempting control parameters save sequence ---")
 
             # --- Step 1: Set Control Mode to allow RS232 writes ---
-            print("1. Setting device to RS232 control mode...")
-            instrument.writeParameter(12, 18)
+            print("Setting device to initreset: enable changes mode...")
+            instrument.writeParameter(7, 64)
             time.sleep(0.1)
 
             # --- Step 2: Write the new PID values ---
-            print("2. Writing new PID values...")
+            print("2. Writing new control values...")
             instrument.writeParameter(167, p_gain)
             instrument.writeParameter(168, i_gain)
             instrument.writeParameter(169, d_gain)
+            instrument.writeParameter(254, speed_gain)
+            instrument.writeParameter(165, int(open_gain))
+            instrument.writeParameter(72, int(norm_gain))
+            instrument.writeParameter(141, int(stab_gain))
+            instrument.writeParameter(361, hyster_gain)
             time.sleep(0.1)
 
-            # --- Step 3: Force save with "initreset" command ---
-            print("3. Sending 'Store Configuration' command (initreset)...")
-            # According to other manuals, initreset (par 7) value 1 can store settings.
-            instrument.writeParameter(7, 1)
-            time.sleep(0.2)  # This command can take longer
+            print("Setting device to initreset: disable changes mode...")
+            instrument.writeParameter(7, 0)
+            time.sleep(0.1)
 
-            # --- Step 4: Return to default bus control mode ---
-            print("4. Returning to default bus control mode...")
-            instrument.writeParameter(12, 0)
-
-            print(f"Set and saved new PID values: P={p_gain}, I={i_gain}, D={d_gain}")
-            QMessageBox.information(self, "Success", "PID parameters have been updated and saved.")
+            print(f"Set and saved new control values: Kp={p_gain}, Ti={i_gain}, Td={d_gain}, Kspeed={speed_gain},Kopen={open_gain}, Knormal={norm_gain},Kstable={stab_gain},Hysteresis={hyster_gain}")
+            QMessageBox.information(self, "Success", "Control parameters have been updated.")
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to set PID parameters.\n\nError: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to set control parameters.\n\nError: {e}")
+            print( "Error:Failed to set control parameters. Error: ",e)
 
     def valve_force_open(self):
         # Create the warning message box

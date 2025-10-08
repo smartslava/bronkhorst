@@ -109,25 +109,44 @@ class PlotWindow(QMainWindow):
         self.graphWidget.getAxis('bottom').setPen('w')
         self.graphWidget.getAxis('left').setPen('w')
 
-        # Store the last 100 data points for plotting
-        self.max_points = 100
+        # Store the last 500 data points for plotting
+        self.max_points = 200
         self.time_data = deque(maxlen=self.max_points)
         self.pressure_data = deque(maxlen=self.max_points)
-
-        self.start_time = time.time()
+        self.setpoint_data = deque(maxlen=self.max_points)  # History of the setpoint
+        self.start_time = time.monotonic()
 
         # Create a plot line with a yellow pen
         pen = pg.mkPen(color=(255, 255, 0), width=2)
         self.data_line = self.graphWidget.plot(list(self.time_data), list(self.pressure_data), pen=pen)
 
-    def update_plot(self, pressure_value):
+        # 1. Create the setpoint line item (initially empty)
+        setpoint_pen = pg.mkPen(color=(255, 0, 0), width=1.5)  # Red, 1px thickness
+        self.setpoint_line = self.graphWidget.plot(pen=setpoint_pen)
+        # 2. Store the current setpoint value
+        self.current_setpoint = 0.0
+
+    def set_setpoint_value(self, value):
+        """A simple slot to receive and store the current setpoint value."""
+        self.current_setpoint = value
+
+    def update_plot(self, timestamp, pressure_value):
         """ This method is a slot that receives new data and updates the plot. """
-        current_time = time.time() - self.start_time
-
-        self.time_data.append(current_time)
+        elapsed_time = timestamp - self.start_time
+        self.time_data.append(elapsed_time)
         self.pressure_data.append(pressure_value)
-
+        self.setpoint_data.append(self.current_setpoint)
         self.data_line.setData(list(self.time_data), list(self.pressure_data))
+
+        # Ensure there's data to draw a line across
+        if self.time_data:
+            # Get the start and end times of the current data window
+            x_start = self.time_data[0]
+            x_end = self.time_data[-1]
+
+            # Draw a horizontal line from the start to the end at the setpoint value
+            #self.setpoint_line.setData([x_start, x_end], [self.current_setpoint, self.current_setpoint])
+            self.setpoint_line.setData(list(self.time_data), list(self.setpoint_data))
 
     def closeEvent(self, event):
         # Override closeEvent to only hide the window, not destroy it
@@ -199,10 +218,11 @@ class Bronkhost(QMainWindow):
 
 
         # Read initial setpoint from device and update UI ---
+        self.plot_window = PlotWindow(self)
         self.read_initial_setpoint()
         self.threadFlow = THREADFlow(self, capacity=self.capacity)
-        # --- Setup plot window and connect it ---
-        self.plot_window = PlotWindow(self)
+
+
 
         self.threadFlow.start()
         self.threadFlow.MEAS.connect(self.aff)
@@ -298,11 +318,12 @@ class Bronkhost(QMainWindow):
         self.win.setpoint.setValue(bar_setpoint)
         self.win.setpoint.blockSignals(False)
 
+        # Send the initial setpoint to the plot window
+        self.plot_window.set_setpoint_value(bar_setpoint)
+
     def show_plot_window(self):
         """ Shows the plot window when the button is clicked. """
         self.plot_window.show()
-
-
 
 
     def valve_PID(self):
@@ -333,7 +354,7 @@ class Bronkhost(QMainWindow):
     def setPoint(self):
         bar_setpoint = self.win.setpoint.value()
         print(f"Bar setpoint set to: {bar_setpoint} {self.unit}")
-
+        self.plot_window.set_setpoint_value(bar_setpoint)
         if self.capacity > 0:
             # Convert absolute setpoint to a percentage
             propar_value = self.bar_to_propar(bar_setpoint, self.capacity)
@@ -359,7 +380,7 @@ class Bronkhost(QMainWindow):
         if hasattr(self.win, 'debug_param_output'):
             self.win.debug_param_output.setText(f"{int(raw_value)} %")
 
-    def aff(self, M):
+    def aff(self, timestamp, M):
         # This function updates the display with the measurement from the thread
 
         # This part updates always, regardless of valve state, to show pressure
@@ -380,6 +401,8 @@ class Bronkhost(QMainWindow):
             self.label_win.valve_status.setText('Force Opened')
 
     def closeEvent(self, event):
+        # Disconnect the signal to prevent it from firing during shutdown.
+        self.win.setpoint.editingFinished.disconnect(self.setPoint)
         print("Closing application...")
 
         if hasattr(self, 'plot_window'):
@@ -440,7 +463,7 @@ class Bronkhost(QMainWindow):
 
 
 class THREADFlow(QtCore.QThread):
-    MEAS = QtCore.pyqtSignal(float)
+    MEAS = QtCore.pyqtSignal(float, float)
     VALVE1_MEAS = QtCore.pyqtSignal(float)  # Signal for inlet valve (param 11)
     DEBUG_MEAS = QtCore.pyqtSignal(float)  # --- NEW SIGNAL for debugging ---
 
@@ -457,10 +480,10 @@ class THREADFlow(QtCore.QThread):
             try:
                 # Read pressure measurement
                 raw_measure = self.instrument.readParameter(8)
-
-                # --- FIX: Convert the raw value directly to bar ---
+                # --- CAPTURE THE PRECISE TIMESTAMP  ---
+                timestamp = time.monotonic()
                 bar_measure = self.propar_to_bar_func(raw_measure, self.capacity)
-                self.MEAS.emit(bar_measure)
+                self.MEAS.emit(timestamp, bar_measure)
 
                 # Read inlet valve output
                 valve1_output = self.instrument.readParameter(55)
@@ -472,7 +495,7 @@ class THREADFlow(QtCore.QThread):
 
             except Exception as e:
                 print(f"Error reading from instrument: {e}")
-            time.sleep(0.5)
+            time.sleep(0.1)
         print('Measurement thread stopped.')
 
     def stopThread(self):
