@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>382</width>
-    <height>563</height>
+    <width>369</width>
+    <height>618</height>
    </rect>
   </property>
   <property name="font">
@@ -121,8 +121,8 @@
           <widget class="QPushButton" name="help_button">
            <property name="minimumSize">
             <size>
-             <width>10</width>
-             <height>10</height>
+             <width>30</width>
+             <height>30</height>
             </size>
            </property>
            <property name="maximumSize">
@@ -176,7 +176,13 @@
         <property name="title">
          <string>Monitors</string>
         </property>
-        <layout class="QGridLayout" name="gridLayout_3">
+        <layout class="QFormLayout" name="formLayout">
+         <property name="horizontalSpacing">
+          <number>6</number>
+         </property>
+         <property name="verticalSpacing">
+          <number>6</number>
+         </property>
          <property name="leftMargin">
           <number>6</number>
          </property>
@@ -189,14 +195,31 @@
          <property name="bottomMargin">
           <number>6</number>
          </property>
-         <property name="spacing">
-          <number>6</number>
-         </property>
-         <item row="0" column="0" alignment="Qt::AlignLeft">
-          <widget class="QLabel" name="label_7">
+         <item row="0" column="0">
+          <widget class="QLabel" name="label_3">
+           <property name="maximumSize">
+            <size>
+             <width>200</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="font">
+            <font>
+             <pointsize>16</pointsize>
+             <weight>75</weight>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="text">
+            <string>Device Status:</string>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="QLabel" name="device_status_label">
            <property name="minimumSize">
             <size>
-             <width>50</width>
+             <width>100</width>
              <height>0</height>
             </size>
            </property>
@@ -214,12 +237,67 @@
             </font>
            </property>
            <property name="text">
-            <string>Valve Status:</string>
+            <string>Normal</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
            </property>
           </widget>
          </item>
-         <item row="1" column="0" alignment="Qt::AlignLeft">
-          <widget class="QLabel" name="label_9">
+         <item row="1" column="0">
+          <widget class="QLabel" name="actual_mode_label">
+           <property name="minimumSize">
+            <size>
+             <width>100</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>200</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="font">
+            <font>
+             <pointsize>16</pointsize>
+             <weight>75</weight>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="text">
+            <string>Actual Mode:</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="QLabel" name="label_valve_status">
+           <property name="maximumSize">
+            <size>
+             <width>200</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="font">
+            <font>
+             <pointsize>16</pointsize>
+             <weight>75</weight>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="text">
+            <string>Closed</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="0">
+          <widget class="QLabel" name="label_In_Out">
            <property name="minimumSize">
             <size>
              <width>0</width>
@@ -240,12 +318,35 @@
             </font>
            </property>
            <property name="text">
-            <string>Valve Opening:</string>
+            <string>In/Out Status:</string>
            </property>
           </widget>
          </item>
-         <item row="2" column="0" alignment="Qt::AlignLeft">
-          <widget class="QLabel" name="label_2">
+         <item row="2" column="1">
+          <widget class="QLabel" name="inlet_valve_label">
+           <property name="maximumSize">
+            <size>
+             <width>200</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="font">
+            <font>
+             <pointsize>16</pointsize>
+             <weight>75</weight>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="text">
+            <string>55%</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="0">
+          <widget class="QLabel" name="measure_label">
            <property name="sizePolicy">
             <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
              <horstretch>0</horstretch>
@@ -276,41 +377,7 @@
            </property>
           </widget>
          </item>
-         <item row="1" column="1" alignment="Qt::AlignHCenter">
-          <widget class="QLabel" name="inlet_valve_label">
-           <property name="font">
-            <font>
-             <pointsize>16</pointsize>
-             <weight>75</weight>
-             <bold>true</bold>
-            </font>
-           </property>
-           <property name="text">
-            <string>55%</string>
-           </property>
-          </widget>
-         </item>
-         <item row="0" column="1" alignment="Qt::AlignHCenter">
-          <widget class="QLabel" name="label_valve_status">
-           <property name="maximumSize">
-            <size>
-             <width>16777215</width>
-             <height>16777215</height>
-            </size>
-           </property>
-           <property name="font">
-            <font>
-             <pointsize>16</pointsize>
-             <weight>75</weight>
-             <bold>true</bold>
-            </font>
-           </property>
-           <property name="text">
-            <string>Closed</string>
-           </property>
-          </widget>
-         </item>
-         <item row="2" column="1" alignment="Qt::AlignHCenter">
+         <item row="3" column="1">
           <widget class="QLabel" name="measure">
            <property name="minimumSize">
             <size>
@@ -320,7 +387,7 @@
            </property>
            <property name="maximumSize">
             <size>
-             <width>16777215</width>
+             <width>200</width>
              <height>16777215</height>
             </size>
            </property>
@@ -339,7 +406,7 @@
            </property>
           </widget>
          </item>
-         <item row="3" column="1" alignment="Qt::AlignHCenter">
+         <item row="4" column="1">
           <widget class="QPushButton" name="plotButton">
            <property name="minimumSize">
             <size>
@@ -349,7 +416,7 @@
            </property>
            <property name="maximumSize">
             <size>
-             <width>90</width>
+             <width>200</width>
              <height>50</height>
             </size>
            </property>
@@ -406,7 +473,7 @@
           <number>5</number>
          </property>
          <item row="1" column="0" alignment="Qt::AlignLeft">
-          <widget class="QLabel" name="label_6">
+          <widget class="QLabel" name="mode_label">
            <property name="font">
             <font>
              <pointsize>16</pointsize>
@@ -415,7 +482,7 @@
             </font>
            </property>
            <property name="text">
-            <string>Valve Control:</string>
+            <string>Valve Mode:</string>
            </property>
           </widget>
          </item>
@@ -424,7 +491,7 @@
            <property name="minimumSize">
             <size>
              <width>90</width>
-             <height>25</height>
+             <height>35</height>
             </size>
            </property>
            <property name="maximumSize">
@@ -439,6 +506,9 @@
              <weight>75</weight>
              <bold>true</bold>
             </font>
+           </property>
+           <property name="inputMethodHints">
+            <set>Qt::ImhNone</set>
            </property>
            <property name="maximum">
             <double>100.000000000000000</double>
@@ -478,7 +548,7 @@
           </widget>
          </item>
          <item row="0" column="0" alignment="Qt::AlignLeft">
-          <widget class="QLabel" name="label">
+          <widget class="QLabel" name="setpoint_label">
            <property name="minimumSize">
             <size>
              <width>50</width>
@@ -531,7 +601,7 @@
             </font>
            </property>
            <property name="text">
-            <string>Close</string>
+            <string>Closed</string>
            </property>
           </widget>
          </item>
@@ -602,7 +672,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>382</width>
+     <width>369</width>
      <height>36</height>
     </rect>
    </property>
