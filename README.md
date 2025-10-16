@@ -1,6 +1,7 @@
 # Bronkhorst EL-PRESS P-800 Controller GUI
 
 A graphical user interface (GUI) for controlling a Bronkhorst EL-PRESS P-800 series pressure controller, built using Python and PyQt5.
+![Application Screenshot](bronk.png)
 ---
 
 This application uses the official `bronkhorst-propar` library to communicate with the device.
