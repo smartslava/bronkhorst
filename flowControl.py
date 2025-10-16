@@ -59,6 +59,11 @@ except ImportError:
 from PyQt5.QtWidgets import QDoubleSpinBox
 from PyQt5.QtCore import Qt, QTimer
 
+def calculate_valve_percentage(raw_valve_output):
+    """Converts the raw valve output (param 55) to a percentage."""
+    max_val = 16777215
+    norm = 100 * (100 / 61.67)
+    return float(norm * (raw_valve_output / max_val))
 
 class Stream(QtCore.QObject):
     """Redirects console output to a QTextEdit widget."""
@@ -290,7 +295,7 @@ class Bronkhost(QMainWindow):
                 try:
                     valve1_output = self.instrument.readParameter(55)
                     if valve1_output is not None:
-                        current_valve_value = self._calculate_valve_percentage(valve1_output)
+                        current_valve_value = calculate_valve_percentage(valve1_output)
                         self.update_inlet_valve_display(current_valve_value)
                     else:
                         # This block runs if the read value is None
@@ -486,9 +491,8 @@ class Bronkhost(QMainWindow):
             self.win.label_In_Out.setStyleSheet("color: white;")
         try:
             valve1_output = self.instrument.readParameter(55)
-            #print(f"Initial raw read of param 55 returned: {valve1_output}")
             if valve1_output is not None:
-                current_valve_value = self._calculate_valve_percentage(valve1_output)
+                current_valve_value = calculate_valve_percentage(valve1_output)
                 self.update_inlet_valve_display(current_valve_value)
             else:
                 # This block runs if the read value is None
@@ -545,7 +549,7 @@ class Bronkhost(QMainWindow):
     def update_inlet_valve_display(self, raw_value):
         if self.valve_status != "closed":
             if hasattr(self.win, 'inlet_valve_label'):
-                self.win.inlet_valve_label.setText(f"{raw_value:.1f}")
+                self.win.inlet_valve_label.setText(f"{raw_value:.2f}")
 
 
     def update_debug_display(self, raw_value):
@@ -640,14 +644,6 @@ class Bronkhost(QMainWindow):
         # Flip the state for the next tick
         self.label_is_visible = not self.label_is_visible
 
-    def _calculate_valve_percentage(self, raw_valve_output):
-        """Converts the raw valve output (param 55) to a percentage."""
-        if raw_valve_output is None:
-            return 0.0
-
-        max_val = 16777215
-        norm = 100 * (100 / 61.7)
-        return float(norm * (raw_valve_output / max_val))
 
 
 class THREADFlow(QtCore.QThread):
@@ -670,20 +666,16 @@ class THREADFlow(QtCore.QThread):
                 # --- Perform all reads first ---
                 alarm_status = self.instrument.readParameter(28)
                 raw_measure = self.instrument.readParameter(8)
-                valve1_output = self.instrument.readParameter(55)
+                valve1_output = self.instrument.readParameter(55)  # Read the valve output here as well
 
-                # --- NEW HEARTBEAT CHECK ---
                 # If a critical read like pressure fails (returns None),
                 # we assume the connection is lost.
                 if raw_measure is None:
                     self.DEVICE_STATUS_UPDATE.emit('offline')
-
-                    # Sleep a little longer before retrying the connection
                     time.sleep(1)
-                    continue  # Skip the rest of this loop iteration
+                    continue
 
                 # --- If reads were successful, process the data ---
-                # Process Alarm Status
                 if alarm_status is not None:
                     if alarm_status & 1:
                         self.DEVICE_STATUS_UPDATE.emit('error')
@@ -692,18 +684,20 @@ class THREADFlow(QtCore.QThread):
                     else:
                         self.DEVICE_STATUS_UPDATE.emit('normal')
 
-                # Process Pressure Measurement
                 timestamp = time.monotonic()
                 bar_measure = self.propar_to_bar_func(raw_measure, self.capacity)
                 self.MEAS.emit(timestamp, bar_measure)
 
-                # Process Inlet Valve Output
+                # --- THIS IS THE CORRECTED LOGIC ---
+                # STEP 2: Calculate the value and EMIT the signal
                 if valve1_output is not None:
-                    percent_value = self.parent._calculate_valve_percentage(valve1_output)
-                    self.VALVE1_MEAS.emit(percent_value)
+                    current_valve_value = calculate_valve_percentage(valve1_output)
+                    # Emit the signal with the calculated percentage
+                    self.VALVE1_MEAS.emit(current_valve_value)
+                # No 'else' block is needed here, because if the read fails,
+                # no signal is sent, and the display simply won't update for that cycle.
 
             except Exception as e:
-                # This is a fallback for other unexpected errors
                 self.DEVICE_STATUS_UPDATE.emit('offline')
                 print(f"Error reading from instrument: {e}")
 

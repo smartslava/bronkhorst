@@ -81,7 +81,7 @@
             <string/>
            </property>
            <property name="pixmap">
-            <pixmap>icons/LOA3.png</pixmap>
+            <pixmap>../../.designer/backup/icons/LOA3.png</pixmap>
            </property>
            <property name="scaledContents">
             <bool>true</bool>
@@ -338,7 +338,7 @@
             </font>
            </property>
            <property name="text">
-            <string>55%</string>
+            <string>55.02</string>
            </property>
            <property name="alignment">
             <set>Qt::AlignCenter</set>
