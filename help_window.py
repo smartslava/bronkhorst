@@ -1,6 +1,6 @@
-from PyQt5.QtWidgets import QDialog
-from PyQt5 import uic
-from PyQt5.QtGui import QIcon
+from PyQt6.QtWidgets import QDialog
+from PyQt6 import uic
+from PyQt6.QtGui import QIcon
 import pathlib, os
 
 
@@ -32,6 +32,11 @@ class HelpWindow(QDialog):
             <li>Upon startup, the program prioritizes safety by immediately <b>sending a command to close the inlet valve</b> and then queries the device to <b>read and display the last known setpoint</b>.</li>
             <li>The setpoint value can be modified even while the valve is closed, allowing the user to prepare the next setting in advance.</li>
             <li>To ensure a safe state upon exit, the application again sends a command to <b>close the valve</b> before terminating the connection.</li>
+        </ul>
+        
+        <h4>User Tag</h4>
+        <ul>
+          <li>Displays the user tag from the device's memory for identification. It can be modified in Advanced Settings.</li>
         </ul>
         
         <h4>Monitors</h4>
@@ -70,6 +75,7 @@ class HelpWindow(QDialog):
           <li><b>Knorm:</b> (Normal Step Response) Adjusts the controller response during a normal setpoint step. A value of 128 means no correction, while other values adjust the speed by a factor of 1.05^(128-Knorm). The default is <b>128</b>.</li>
           <li><b>Kstab:</b> (Stable Response) Adjusts the controller response when stable (within a 2% band). A value of 128 means no correction, while other values adjust the speed by a factor of 1.05^(128-Kstab). The default is <b>128</b>.</li>
           <li><b>Hyster: </b> (Controller Hysteresis) Defines a pressure band around the setpoint where both control valves remain closed. The value (0 to 1.0) corresponds to 0% to 100% of the setpoint range. The default is <b>0.001 (0.1%)</b>.</li>
+          <li><b>UserTag: </b> User definable alias string. Maximum 16 characters allow the user to give the instrument his own tag name.</li>
         </ul>
         """
         version_info = f"""

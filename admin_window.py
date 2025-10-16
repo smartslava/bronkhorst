@@ -1,5 +1,5 @@
-from PyQt5.QtWidgets import QMainWindow, QApplication, QMessageBox
-from PyQt5 import uic
+from PyQt6.QtWidgets import QMainWindow, QApplication, QMessageBox
+from PyQt6 import uic
 import time
 
 class AdminWindow(QMainWindow):
@@ -34,8 +34,6 @@ class AdminWindow(QMainWindow):
         # Read the current PID values when the window opens
         self.read_pid_parameters()
 
-        if hasattr(self, 'force_open_button'):
-            self.force_open_button.clicked.connect(self.valve_force_open)
 
     def read_pid_parameters(self):
         """Reads the current PID values from the instrument and updates the UI."""
@@ -50,7 +48,8 @@ class AdminWindow(QMainWindow):
             norm_gain = instrument.readParameter(72)
             stab_gain = instrument.readParameter(141)
             hyster_gain = instrument.readParameter(361)
-
+            user_tag_raw = instrument.readParameter(115)
+            user_tag = str(user_tag_raw)
             if p_gain is not None:
                 self.p_gain_box.setValue(p_gain)
             if i_gain is not None:
@@ -67,10 +66,11 @@ class AdminWindow(QMainWindow):
                 self.stab_gain_box.setValue(stab_gain)
             if hyster_gain is not None:
                 self.hyster_gain_box.setValue(hyster_gain)
+            if user_tag is not None:
+                self.user_tag_lineedit.setText(user_tag.strip())
 
 
-
-            print(f"Read valve control parameters: Kp={p_gain}, Ti={i_gain}, Td={d_gain}, Kspeed={speed_gain},Kopen={open_gain}, Knormal={norm_gain},Kstable={stab_gain},Hysteresis={hyster_gain}")
+            print(f"Read valve control parameters: Kp={p_gain}, Ti={i_gain}, Td={d_gain}, Kspeed={speed_gain},Kopen={open_gain}, Knormal={norm_gain},Kstable={stab_gain},Hysteresis={hyster_gain},UserTag={user_tag}")
         except Exception as e:
             print(f"Error reading valve control parameters: {e}")
 
@@ -86,6 +86,7 @@ class AdminWindow(QMainWindow):
             norm_gain = self.norm_gain_box.value()
             stab_gain = self.stab_gain_box.value()
             hyster_gain = self.hyster_gain_box.value()
+            user_tag = self.user_tag_lineedit.text().strip()
 
             print("--- Attempting control parameters save sequence ---")
 
@@ -104,14 +105,21 @@ class AdminWindow(QMainWindow):
             instrument.writeParameter(72, int(norm_gain))
             instrument.writeParameter(141, int(stab_gain))
             instrument.writeParameter(361, hyster_gain)
+            instrument.writeParameter(115, user_tag)
             time.sleep(0.1)
 
             print("Setting device to initreset: disable changes mode...")
             instrument.writeParameter(7, 0)
             time.sleep(0.1)
 
-            print(f"Set and saved new control values: Kp={p_gain}, Ti={i_gain}, Td={d_gain}, Kspeed={speed_gain},Kopen={open_gain}, Knormal={norm_gain},Kstable={stab_gain},Hysteresis={hyster_gain}")
+            print(f"Set and saved new control values: Kp={p_gain}, Ti={i_gain}, Td={d_gain}, Kspeed={speed_gain},Kopen={open_gain}, Knormal={norm_gain},Kstable={stab_gain},Hysteresis={hyster_gain},UserTag={user_tag}")
             QMessageBox.information(self, "Success", "Control parameters have been updated.")
+
+            try:
+                self.main_window.read_device_info()
+                print("Main window device info refreshed after saving settings.")
+            except Exception as e:
+                print(f"Warning: could not refresh device info after saving: {e}")
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to set control parameters.\n\nError: {e}")

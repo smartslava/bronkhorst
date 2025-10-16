@@ -1,22 +1,26 @@
+# Force qtpy (used by qdarkstyle) to initialize with the correct binding
+import qtpy
+
 # -*- coding: utf-8 -*-
 """
 Created on Wed Jun 21 15:26:36 2023
 @author: SALLEJAUNE & Slava Smartsev
 """
 __version__ = "1.1.0"
-
+import pathlib, os
+os.environ['QT_API'] = 'pyqt6'
 from admin_window import AdminWindow
 from help_window import HelpWindow
 import propar
-from PyQt5 import QtCore, uic
-from PyQt5.QtWidgets import QApplication, QWidget, QMainWindow, QInputDialog, QMessageBox, QLineEdit
+from PyQt6 import QtCore, uic
+from PyQt6.QtWidgets import QApplication, QWidget, QMainWindow, QInputDialog, QMessageBox, QLineEdit
 
-from PyQt5.QtGui import QIcon
+from PyQt6.QtGui import QIcon
 import sys
 import time
 import qdarkstyle
-from PyQt5.QtCore import Qt
-import pathlib, os
+from PyQt6.QtCore import Qt
+
 from collections import deque
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -56,8 +60,8 @@ except ImportError:
     error_box.setWindowTitle("Dependency Error")
     error_box.exec_()
     sys.exit(1)
-from PyQt5.QtWidgets import QDoubleSpinBox
-from PyQt5.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import QDoubleSpinBox
+from PyQt6.QtCore import Qt, QTimer
 
 def calculate_valve_percentage(raw_valve_output):
     """Converts the raw valve output (param 55) to a percentage."""
@@ -245,19 +249,28 @@ class Bronkhost(QMainWindow):
 
         self.win.title_2.setText('Pressure Control')
 
-    def update_device_status(self, status):
+    def update_device_status(self, status: str):
         """Updates the device status label and enables/disables controls."""
-        if not hasattr(self.win, 'device_status_label'):
-            return
+        # Track previous status to avoid repeated reads
+        if not hasattr(self, '_last_status'):
+            self._last_status = None
 
-        if status == 'offline':
+        # Update the UI label
+        if hasattr(self.win, 'device_status_label'):
+            self.win.device_status_label.setText(status)
+
+        normalized_status = status.lower().strip()
+
+        # --- OFFLINE STATE ---
+        if normalized_status == 'offline':
             if not self.is_offline:
                 print("Connection to device lost...")
                 self.is_offline = True
-            # --- OFFLINE STATE: Gray out and disable UI elements ---
-            self.win.device_status_label.setText('Offline')
-            self.win.device_status_label.setStyleSheet("color: red; font-weight: bold;")
 
+            self.win.device_status_label.setText('Offline')
+            self.win.device_status_label.setStyleSheet("color: red;")
+
+            # Stop flickering, disable UI, gray out everything
             self.flicker_timer.stop()
             self.win.label_valve_status.setText("...")
             self.win.label_valve_status.setStyleSheet("color: gray;")
@@ -272,25 +285,24 @@ class Bronkhost(QMainWindow):
             if hasattr(self.win, 'admin_button'):
                 self.win.admin_button.setEnabled(False)
 
-            # Set a uniform gray style for all affected widgets
             self.win.openButton.setStyleSheet("background-color: gray;")
             self.win.closeButton.setStyleSheet("background-color: gray;")
             self.win.plotButton.setStyleSheet("background-color: gray;")
 
             gray_text_style = "color: gray;"
-            if hasattr(self.win, 'setpoint_label'): self.win.setpoint_label.setStyleSheet(gray_text_style)
-            if hasattr(self.win, 'actual_mode_label'): self.win.actual_mode_label.setStyleSheet(gray_text_style)
-            if hasattr(self.win, 'measure_label'): self.win.measure_label.setStyleSheet(gray_text_style)
-            if hasattr(self.win, 'measure'): self.win.measure.setStyleSheet(gray_text_style)
-            if hasattr(self.win, 'mode_label'): self.win.mode_label.setStyleSheet(gray_text_style)
-            if hasattr(self.win, 'label_In_Out'): self.win.label_In_Out.setStyleSheet(gray_text_style)
-            if hasattr(self.win, 'inlet_valve_label'): self.win.inlet_valve_label.setStyleSheet(gray_text_style)
+            for attr in [
+                'setpoint_label', 'actual_mode_label', 'measure_label', 'measure',
+                'mode_label', 'label_In_Out', 'inlet_valve_label', 'user_tag_label'
+            ]:
+                if hasattr(self.win, attr):
+                    getattr(self.win, attr).setStyleSheet(gray_text_style)
 
-
-        else:
-            if self.is_offline:
-                print("Connection to device re-established...")
-                self.is_offline = False
+        # --- NORMAL STATE ---
+        elif normalized_status == "normal":
+            # Only trigger the refresh once per transition
+            if self._last_status != "normal":
+                print("Device status back to Normal — refreshing device info...")
+                self.read_device_info()
 
                 try:
                     valve1_output = self.instrument.readParameter(55)
@@ -298,70 +310,57 @@ class Bronkhost(QMainWindow):
                         current_valve_value = calculate_valve_percentage(valve1_output)
                         self.update_inlet_valve_display(current_valve_value)
                     else:
-                        # This block runs if the read value is None
                         if hasattr(self.win, 'inlet_valve_label'):
                             self.win.inlet_valve_label.setText("...")
                 except Exception as e:
                     print(f"Failed to perform valve read on reconnect: {e}")
                     if hasattr(self.win, 'inlet_valve_label'):
                         self.win.inlet_valve_label.setText("...")
-            # --- ONLINE STATE: Re-enable UI elements and restore styles ---
-            # --- Re-enable Controls ---
-            self.win.plotButton.setEnabled(True)
-            self.win.openButton.setEnabled(True)
-            self.win.closeButton.setEnabled(True)
-            self.win.setpoint.setEnabled(True)
-            if hasattr(self.win, 'admin_button'):
-                self.win.admin_button.setEnabled(True)
 
-            # --- Restore Default Styles ---
-            self.win.plotButton.setStyleSheet("")  # Revert to default stylesheet
+                # Re-enable UI
+                self.win.plotButton.setEnabled(True)
+                self.win.openButton.setEnabled(True)
+                self.win.closeButton.setEnabled(True)
+                self.win.setpoint.setEnabled(True)
+                if hasattr(self.win, 'admin_button'):
+                    self.win.admin_button.setEnabled(True)
 
-            # Restore label colors (assuming default is white for a dark theme)
-            default_label_color = "color: white;"
-            if hasattr(self.win, 'setpoint_label'): self.win.setpoint_label.setStyleSheet(default_label_color)
-            if hasattr(self.win, 'actual_mode_label'): self.win.actual_mode_label.setStyleSheet(default_label_color)
-            if hasattr(self.win, 'measure_label'): self.win.measure_label.setStyleSheet(default_label_color)
-            if hasattr(self.win, 'measure'): self.win.measure.setStyleSheet(default_label_color)
-            if hasattr(self.win, 'mode_label'): self.win.mode_label.setStyleSheet(default_label_color)
-            if hasattr(self.win, 'inlet_valve_label'):
-                if self.valve_status == "closed":
-                    self.win.inlet_valve_label.setStyleSheet("color: gray;")
-                else:
-                    self.win.inlet_valve_label.setStyleSheet(default_label_color)
+                # Restore colors
+                default_label_color = "color: white;"
+                for attr in [
+                    'setpoint_label', 'actual_mode_label', 'measure_label', 'measure',
+                    'mode_label', 'user_tag_label', 'inlet_valve_label', 'label_In_Out'
+                ]:
+                    if hasattr(self.win, attr):
+                        getattr(self.win, attr).setStyleSheet(default_label_color)
 
-            if hasattr(self.win, 'label_In_Out'):
-                if self.valve_status == "closed":
-                    self.win.label_In_Out.setStyleSheet("color: gray;")
-                else:
-                    self.win.label_In_Out.setStyleSheet(default_label_color)
+                # Restore buttons and valve labels
+                if self.valve_status == "PID":
+                    self.win.openButton.setStyleSheet("background-color: green;")
+                    self.win.closeButton.setStyleSheet("background-color: gray;")
+                    self.win.label_valve_status.setText("PID")
+                    self.win.label_valve_status.setStyleSheet("color: white;")
+                elif self.valve_status == "closed":
+                    self.win.openButton.setStyleSheet("background-color: gray;")
+                    self.win.closeButton.setStyleSheet("background-color: red;")
+                    self.win.label_valve_status.setText("Closed")
+                    if not self.flicker_timer.isActive():
+                        self.flicker_timer.start(500)
 
-            # --- Restore Button and Valve Status Label states ---
-            if self.valve_status == "PID":
-                self.win.openButton.setStyleSheet("background-color: green;")
-                self.win.closeButton.setStyleSheet("background-color: gray;")
-                self.win.label_valve_status.setText("PID")
-                self.win.label_valve_status.setStyleSheet("color: white;")
-            elif self.valve_status == "closed":
-                self.win.openButton.setStyleSheet("background-color: gray;")
-                self.win.closeButton.setStyleSheet("background-color: red;")
-                self.win.label_valve_status.setText("Closed")
-
-                # --- THIS IS THE FIX ---
-                # Only start the timer if it isn't already running
-                if not self.flicker_timer.isActive():
-                    self.flicker_timer.start(500)
-
-            # --- Update the device status text and color ---
-            if status == 'error':
-                self.win.device_status_label.setText('ERROR')
-                self.win.device_status_label.setStyleSheet("color: red; font-weight: bold;")
-            elif status == 'warning':
-                self.win.device_status_label.setText('Warning')
-                self.win.device_status_label.setStyleSheet("color: orange; font-weight: bold;")
-            else:  # 'normal'
+                # Update status text and color
                 self.win.device_status_label.setText('Normal')
                 self.win.device_status_label.setStyleSheet("color: green;")
+
+        # --- ERROR or WARNING STATE ---
+        elif normalized_status == 'error':
+            self.win.device_status_label.setText('ERROR')
+            self.win.device_status_label.setStyleSheet("color: red;")
+        elif normalized_status == 'warning':
+            self.win.device_status_label.setText('Warning')
+            self.win.device_status_label.setStyleSheet("color: orange;")
+
+        # Update last status for transition detection
+        self._last_status = normalized_status
 
 
     def update_log(self, text):
@@ -383,17 +382,25 @@ class Bronkhost(QMainWindow):
         if hasattr(self.win, 'help_button'):
             self.win.help_button.clicked.connect(self.show_help_window)
 
+    def update_user_tag_label(self, tag_string: str):
+        if not hasattr(self.win, 'user_tag_label'):
+            return
+        try:
+            display_text = str(tag_string).strip() or "—"
+            self.win.user_tag_label.setText(display_text)
+        except Exception as e:
+            print(f"Failed to update user tag label: {e}")
 
 
     def open_admin_panel(self):
         # The correct password
-        CORRECT_PASSWORD = "123"
+        CORRECT_PASSWORD = "appli"
 
         # Pop up the password dialog
         password, ok = QInputDialog.getText(self,
                                             "Admin Access",
                                             "Enter Password:",
-                                            QLineEdit.Password)  # This hides the text
+                                            QLineEdit.EchoMode.Password)  # This hides the text
 
         # Check if the user clicked "OK" and if the password is correct
         if ok and password == CORRECT_PASSWORD:
@@ -430,6 +437,7 @@ class Bronkhost(QMainWindow):
         try:
             capacity = self.instrument.readParameter(21)
             unit = self.instrument.readParameter(129)
+            user_tag_raw = self.instrument.readParameter(115)
 
             if capacity is not None:
                 self.capacity = float(capacity)
@@ -447,10 +455,19 @@ class Bronkhost(QMainWindow):
                 # --- Set the dedicated unit label ---
                 if hasattr(self.win, 'unit_label'):
                     self.win.unit_label.setText(self.unit)
-                    # --- INCREASE FONT SIZE AND MAKE BOLD ---
-                    self.win.unit_label.setStyleSheet("font-size: 16pt; font-weight: bold; color: white;")
+                    self.win.unit_label.setStyleSheet("font-size: 16pt; color: white;")
             else:
                 print("Warning: Could not read device unit (param 129).")
+
+            if user_tag_raw is not None:
+                if isinstance(user_tag_raw, (bytes, bytearray)):
+                    try:
+                        user_tag = user_tag_raw.decode('utf-8', errors='ignore')
+                    except Exception:
+                        user_tag = str(user_tag_raw)
+                else:
+                    user_tag = str(user_tag_raw)
+                self.update_user_tag_label(user_tag)
 
         except Exception as e:
             print(f"Error reading device info: {e}")
@@ -511,7 +528,6 @@ class Bronkhost(QMainWindow):
     def valve_close(self):
         print('Valve closed')
         self.win.label_valve_status.setText('Closed')
-        #self.win.label_valve_status.setStyleSheet("color: red; font-weight: bold;")
         self.win.closeButton.setStyleSheet("background-color: red")
         self.win.openButton.setStyleSheet("background-color: gray")
         self.flicker_timer.start(500)  # 500 ms interval
@@ -638,8 +654,7 @@ class Bronkhost(QMainWindow):
             # Make text transparent (same as background)
             self.win.label_valve_status.setStyleSheet("color: transparent;")
         else:
-            # --- UPDATE THIS LINE to include bold ---
-            self.win.label_valve_status.setStyleSheet("color: red; font-weight: bold;")
+            self.win.label_valve_status.setStyleSheet("color: red;")
 
         # Flip the state for the next tick
         self.label_is_visible = not self.label_is_visible
@@ -678,17 +693,16 @@ class THREADFlow(QtCore.QThread):
                 # --- If reads were successful, process the data ---
                 if alarm_status is not None:
                     if alarm_status & 1:
-                        self.DEVICE_STATUS_UPDATE.emit('error')
+                        self.DEVICE_STATUS_UPDATE.emit('Error')
                     elif alarm_status & 2:
-                        self.DEVICE_STATUS_UPDATE.emit('warning')
+                        self.DEVICE_STATUS_UPDATE.emit('Warning')
                     else:
-                        self.DEVICE_STATUS_UPDATE.emit('normal')
+                        self.DEVICE_STATUS_UPDATE.emit('Normal')
 
                 timestamp = time.monotonic()
                 bar_measure = self.propar_to_bar_func(raw_measure, self.capacity)
                 self.MEAS.emit(timestamp, bar_measure)
 
-                # --- THIS IS THE CORRECTED LOGIC ---
                 # STEP 2: Calculate the value and EMIT the signal
                 if valve1_output is not None:
                     current_valve_value = calculate_valve_percentage(valve1_output)
@@ -701,7 +715,7 @@ class THREADFlow(QtCore.QThread):
                 self.DEVICE_STATUS_UPDATE.emit('offline')
                 print(f"Error reading from instrument: {e}")
 
-            time.sleep(0.1)
+            time.sleep(0.15)
         print('Measurement thread stopped.')
 
     def stopThread(self):
@@ -710,7 +724,8 @@ class THREADFlow(QtCore.QThread):
 
 if __name__ == '__main__':
     appli = QApplication(sys.argv)
-    appli.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
+    appli.setStyleSheet(qdarkstyle.load_stylesheet())
+    #appli.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
 
     main_window = None
 

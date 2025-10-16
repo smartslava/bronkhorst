@@ -20,9 +20,12 @@ The P-800 controller incorporates two control valves: an **inlet valve** and a *
 
 ## Dependencies
 
-This project is built with **Python 3.x** and requires the following packages:
+This project is built with **Python 3.10.19** and requires the following packages:
 
-* **PyQt5**: For the graphical user interface.
+* **PyQt6**: Used for the graphical user interface (GUI).
+    ```bash
+    pip install PyQt6
+    ```
 * **bronkhorst-propar**: For communication with the controller.
     ```bash
     pip install bronkhorst-propar

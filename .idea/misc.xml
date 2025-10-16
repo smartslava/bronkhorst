@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="pymodaq_plugins_teaching" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="pymodaq_plugins_teaching" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="bronkhorst_env" project-jdk-type="Python SDK" />
 </project>
