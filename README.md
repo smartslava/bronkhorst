@@ -48,5 +48,3 @@ To start the application, run the main Python script from your terminal:
 
 ```bash
 python flowControl.py
-  
- 
