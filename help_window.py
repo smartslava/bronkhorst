@@ -52,8 +52,22 @@ class HelpWindow(QDialog):
             <small><i>Sometimes shows 0% while both valves are closed, need to debug...</i></small>
           </li>
           <li><b>Actual P (bar):</b> Displays the real-time pressure measured by the controller.</li>
-          <li><b>Time Plot Button:</b> Opens a real-time graph of pressure (yellow) and setpoint (red) over time.</li>
+          
         </ul>
+        
+        <h4>Time Plot</h4>
+        <ul>
+        <li><b>History(s):</b> Set the desired total span of time visible in the plot window. The value is sent when you press Enter or when the input box loses focus.</li>
+        <li><b>Plot! Button:</b> Opens a real-time graph of pressure (yellow) and setpoint (red) over time.</li>
+        <li><b>Plot! Button:</b> Opens a real-time graph of pressure (yellow) and setpoint (red) over time.</li>
+        <li><b>Right-Click Menu (Plot Window):</b> Right-clicking inside the plot window provides quick access to data handling features, including:
+        <ul style="list-style-type: circle; margin-top: 5px;">
+            <li><span style="font-weight: bold;">Export Data:</span> Save the entire history buffer (timestamps, pressure measurements, setpoints) to a file (e.g., CSV).</li>
+            <li><span style="font-weight: bold;">Save Image:</span> Export the current plot view as an image file (e.g., PNG).</li>
+        </ul>
+    </li>
+        </ul>
+        
         
         <h4>Controls</h4>
         <ul>

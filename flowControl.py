@@ -15,6 +15,9 @@ import propar
 from PyQt6 import QtCore, uic
 from PyQt6.QtWidgets import QApplication, QWidget, QMainWindow, QInputDialog, QMessageBox, QLineEdit
 
+import datetime as dt
+import pyqtgraph as pg
+
 from PyQt6.QtGui import QIcon
 import sys
 import time
@@ -99,65 +102,158 @@ class EnterSpinBox(QDoubleSpinBox):
             # the selection happens immediately after our event runs.
             QTimer.singleShot(0, self.lineEdit().deselect)
 
+
+class TimeAxisItem(pg.AxisItem):
+    """
+    Custom AxisItem that displays system timestamps (seconds since epoch)
+    converted explicitly from UTC to local time zone.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.enableAutoSIPrefix(False)
+
+    def tickStrings(self, values, scale, spacing):
+        strings = []
+        for value in values:
+            try:
+                # 1. Create a datetime object using the raw timestamp, assuming it is UTC.
+                #    We use utcfromtimestamp to avoid locale ambiguities, though fromtimestamp
+                #    should work if you are on a very old Python version.
+                #    A simpler way for modern python is: dt.datetime.fromtimestamp(value, dt.timezone.utc)
+
+                # --- The most robust conversion to local time ---
+                utc_dt = dt.datetime.fromtimestamp(value, dt.timezone.utc)
+
+                # 2. Convert the UTC time to the local time zone of the machine.
+                local_dt = utc_dt.astimezone(None)  # None uses the system's local time zone
+
+                # 3. Format the LOCALIZED datetime object to display time as HH:MM:SS
+                strings.append(local_dt.strftime('%H:%M:%S'))
+
+            except Exception:
+                strings.append('')
+        return strings
+
 class PlotWindow(QMainWindow):
-    """
-    This class creates a new window for plotting the pressure data in real-time.
-    """
+    # ... (other code)
 
     def __init__(self, parent=None):
+        # 1. Initialize the QMainWindow superclass
         super(PlotWindow, self).__init__(parent)
+
         self.setWindowTitle('Real-Time Pressure Plot')
-        self.graphWidget = pg.PlotWidget()
+
+        self.graphWidget = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
         self.setCentralWidget(self.graphWidget)
 
-        # Styling the plot
+        # 3. Styling the plot
         self.graphWidget.setBackground('k')
         self.graphWidget.setTitle("Pressure Reading (bar)", color="w", size="15pt")
         styles = {'color': 'w', 'font-size': '12pt'}
         self.graphWidget.setLabel('left', 'Pressure (bar)', **styles)
-        self.graphWidget.setLabel('bottom', 'Time (s)', **styles)
+        # *** FIX: Update the label from 'Time (s)' to 'Time (HH:MM:SS)' ***
+        self.graphWidget.setLabel('bottom', 'Time (HH:MM:SS)', **styles)
         self.graphWidget.showGrid(x=True, y=True)
         self.graphWidget.getAxis('bottom').setPen('w')
         self.graphWidget.getAxis('left').setPen('w')
 
-        # Store the last 500 data points for plotting
-        self.max_points = 200
-        self.time_data = deque(maxlen=self.max_points)
-        self.pressure_data = deque(maxlen=self.max_points)
-        self.setpoint_data = deque(maxlen=self.max_points)  # History of the setpoint
-        self.start_time = time.monotonic()
+        # 4. Initialize Data Storage (MAX_HISTORY_POINTS needs to be defined near the class)
+        MAX_HISTORY_POINTS = 24000 #around 1 hour
+        self.time_data = deque(maxlen=MAX_HISTORY_POINTS)
+        self.pressure_data = deque(maxlen=MAX_HISTORY_POINTS)
+        self.setpoint_data = deque(maxlen=MAX_HISTORY_POINTS)
+        #self.start_time = time.monotonic()
 
-        # Create a plot line with a yellow pen
+
+        self.max_duration = 10.0  # Default visible duration in seconds
+
+        # 5. Initialize Plot Lines
         pen = pg.mkPen(color=(255, 255, 0), width=2)
         self.data_line = self.graphWidget.plot(list(self.time_data), list(self.pressure_data), pen=pen)
 
-        # 1. Create the setpoint line item (initially empty)
-        setpoint_pen = pg.mkPen(color=(255, 0, 0), width=1.5)  # Red, 1px thickness
+        setpoint_pen = pg.mkPen(color=(255, 0, 0), width=1.5)
         self.setpoint_line = self.graphWidget.plot(pen=setpoint_pen)
-        # 2. Store the current setpoint value
+
+        # 6. Initialize Setpoint State
         self.current_setpoint = 0.0
+
+
+
+
+        def tickStrings(self, values, scale, spacing):
+            """
+            Formats the tick values (which are seconds from self.start_time)
+            into HH:MM:SS strings.
+            """
+            strings = []
+            for value in values:
+                try:
+                    # Convert the float time-in-seconds to a datetime.timedelta object
+                    td = dt.timedelta(seconds=value)
+
+                    # Format the timedelta object into HH:MM:SS
+                    # We need to manually handle hours greater than 23
+                    total_seconds = int(td.total_seconds())
+                    hours, remainder = divmod(total_seconds, 3600)
+                    minutes, seconds = divmod(remainder, 60)
+
+                    # Format: Hours padded to 2 digits, Minutes padded to 2 digits, Seconds padded to 2 digits
+                    strings.append(f'{hours:02d}:{minutes:02d}:{seconds:02d}')
+                except OverflowError:
+                    # Fallback for extremely large values
+                    strings.append('')
+            return strings
+
+    def set_max_duration(self, duration_s: float):
+        """Sets the new maximum duration (in seconds) for the plot's X-axis."""
+        if duration_s > 0:
+            self.max_duration = duration_s
+            # When duration changes, it forces a refresh of the plotted data
+            self.update_plot_viewport()
 
     def set_setpoint_value(self, value):
         """A simple slot to receive and store the current setpoint value."""
         self.current_setpoint = value
 
     def update_plot(self, timestamp, pressure_value):
-        """ This method is a slot that receives new data and updates the plot. """
-        elapsed_time = timestamp - self.start_time
-        self.time_data.append(elapsed_time)
+        """ This method receives new data, appends it to the history, and updates the plot view. """
+
+        # *** FIX: Remove the elapsed time calculation! ***
+        # The incoming 'timestamp' from THREADFlow is now the absolute x-value (time.time())
+        # The line 'elapsed_time = timestamp - self.start_time' is no longer needed.
+
+        # 1. Append new data (using the absolute timestamp directly)
+        self.time_data.append(timestamp)  # Use the absolute timestamp here
         self.pressure_data.append(pressure_value)
         self.setpoint_data.append(self.current_setpoint)
+
+        # 2. Update the plot lines
         self.data_line.setData(list(self.time_data), list(self.pressure_data))
+        self.setpoint_line.setData(list(self.time_data), list(self.setpoint_data))
 
-        # Ensure there's data to draw a line across
+        # 3. Adjust the viewport to show the desired max_duration
+        self.update_plot_viewport()
+
+    def update_plot_viewport(self):
+        """Automatically adjusts the X-axis view to match the current duration setting,
+        clipping the view to the actual recorded history."""
+
         if self.time_data:
-            # Get the start and end times of the current data window
-            x_start = self.time_data[0]
-            x_end = self.time_data[-1]
+            x_max = self.time_data[-1]
 
-            # Draw a horizontal line from the start to the end at the setpoint value
-            #self.setpoint_line.setData([x_start, x_end], [self.current_setpoint, self.current_setpoint])
-            self.setpoint_line.setData(list(self.time_data), list(self.setpoint_data))
+            # 1. Calculate the minimum time required by the max_duration setting
+            required_x_min = x_max - self.max_duration
+
+            # 2. Get the actual oldest time currently in the deque
+            actual_x_min = self.time_data[0]
+
+            # 3. Clip the visible minimum (x_min) to be the larger of the two values.
+            #    This prevents viewing time before the first recorded point.
+            x_min = max(required_x_min, actual_x_min)
+
+            # 4. Set the X-Range of the plot
+            self.graphWidget.setXRange(x_min, x_max, padding=0)
 
     def closeEvent(self, event):
         # Override closeEvent to only hide the window, not destroy it
@@ -182,20 +278,20 @@ class Bronkhost(QMainWindow):
         self.win = uic.loadUi('flow.ui', self)
         self.win.setpoint.setGroupSeparatorShown(False)
 
-        #-----Flickering Label-----------
+        # Initialize plot_window to None to prevent AttributeError if connection fails
+        self.plot_window = None
+
+        # -----Flickering Label-----------
         self.flicker_timer = QTimer(self)
         self.flicker_timer.timeout.connect(self._toggle_status_label_visibility)
         self.label_is_visible = True  # State tracker for the flicker
 
         # --- REDIRECT PRINT STATEMENTS ---
-        # 1. Create an instance of our custom stream
         self.log_stream = Stream()
-        # 2. Connect the stream's signal to our update function
         self.log_stream.new_text.connect(self.update_log)
-        # 3. Redirect Python's standard output to our custom stream
         sys.stdout = self.log_stream
         print(f"--- LOA Pressure Control v{__version__} ---")
-        # ------------------------------------
+
         try:
             self.instrument = propar.instrument(com)
             device_serial = self.instrument.readParameter(1)  # Try to read the serial number
@@ -217,9 +313,11 @@ class Bronkhost(QMainWindow):
             print("Failed")
             QMessageBox.critical(self, "Connection Error",
                                  f"Failed to connect to {com}.\n\nError: {e}\n\nPlease check connection or try another port.")
-
             return
 
+        # -------------------------------------------------------------------
+        # *** START SUCCESSFUL CONNECTION BLOCK ***
+        # -------------------------------------------------------------------
         self.setWindowTitle(f"{name} v{__version__}")
         self.icon = str(p.parent) + sepa + 'icons' + sepa
         self.setWindowIcon(QIcon(self.icon + 'LOA3.png'))
@@ -227,7 +325,6 @@ class Bronkhost(QMainWindow):
         self.raise_()
 
         # Set valve to closed on startup
-        self.actionButton()
         self.valve_close()
 
         # --- Read device capacity and units ---
@@ -235,15 +332,23 @@ class Bronkhost(QMainWindow):
         self.unit = ""
         self.read_device_info()
 
-        # Read initial setpoint from device and update UI ---
+        # 1. Initialize PlotWindow
         self.plot_window = PlotWindow(self)
-        self.read_initial_setpoint()
-        self.threadFlow = THREADFlow(self, capacity=self.capacity)
 
+        # 2. Setup UI connections
+        self.actionButton()
+
+        # 3. Read initial setpoint
+        self.read_initial_setpoint()
+
+        # 4. Initialize and start the thread
+        self.threadFlow = THREADFlow(self, capacity=self.capacity)
         self.threadFlow.start()
+
+        # 5. Connect thread signals
         self.threadFlow.MEAS.connect(self.aff)
         self.threadFlow.VALVE1_MEAS.connect(self.update_inlet_valve_display)
-        self.threadFlow.DEBUG_MEAS.connect(self.update_debug_display)  # Connect new debug signal
+        self.threadFlow.DEBUG_MEAS.connect(self.update_debug_display)
         self.threadFlow.MEAS.connect(self.plot_window.update_plot)
         self.threadFlow.DEVICE_STATUS_UPDATE.connect(self.update_device_status)
 
@@ -299,9 +404,19 @@ class Bronkhost(QMainWindow):
 
         # --- NORMAL STATE ---
         elif normalized_status == "normal":
+            # *** FIX: Reset the offline flag immediately ***
+            if self.is_offline:
+                self.is_offline = False
+                print("Device back online. Resetting offline status.")
+
             # Only trigger the refresh once per transition
             if self._last_status != "normal":
                 print("Device status back to Normal — refreshing device info...")
+
+                # Resynchronize Setpoint only if plot_window is initialized
+                if self.plot_window is not None:
+                    self._resync_setpoint()
+
                 self.read_device_info()
 
                 try:
@@ -362,6 +477,24 @@ class Bronkhost(QMainWindow):
         # Update last status for transition detection
         self._last_status = normalized_status
 
+    def _resync_setpoint(self):
+        """
+        Forces the current value in the QDoubleSpinBox to be written
+        to the instrument, bypassing any signal-based issues after reconnection.
+        """
+        # 1. Temporarily disconnect the signal to prevent re-triggering itself
+        # This is a safer alternative to blockSignals(True) for complex interactions.
+        try:
+            self.win.setpoint.editingFinished.disconnect(self.setPoint)
+        except TypeError:
+            # Handle case where it might already be disconnected (safe)
+            pass
+
+        # 2. Execute the actual setpoint logic
+        self.setPoint()
+
+        # 3. Reconnect the signal
+        self.win.setpoint.editingFinished.connect(self.setPoint)
 
     def update_log(self, text):
         """Appends text to the QTextEdit."""
@@ -382,6 +515,13 @@ class Bronkhost(QMainWindow):
         if hasattr(self.win, 'help_button'):
             self.win.help_button.clicked.connect(self.show_help_window)
 
+        # Safely connect the plot duration spinbox
+        if self.plot_window is not None and hasattr(self.win, 'plot_duration_spinbox'):
+            # Set the initial value (as an integer)
+            integer_duration = int(self.plot_window.max_duration)
+            self.win.plot_duration_spinbox.setValue(integer_duration)
+            self.win.plot_duration_spinbox.editingFinished.connect(self._setPlotDuration)
+
     def update_user_tag_label(self, tag_string: str):
         if not hasattr(self.win, 'user_tag_label'):
             return
@@ -391,6 +531,21 @@ class Bronkhost(QMainWindow):
         except Exception as e:
             print(f"Failed to update user tag label: {e}")
 
+    def _setPlotDuration(self):
+        """
+        Reads the integer value from the spinbox and updates the plot duration
+        in the plot window, triggered when editing is finished.
+        """
+        if self.is_offline or self.plot_window is None:
+            return
+
+        # Read the integer value from the spin box
+        new_duration_int = self.win.plot_duration_spinbox.value()
+
+        print(f"Plot duration set to: {new_duration_int} seconds (applied on finish)")
+
+        # Pass the value (as float) to the PlotWindow method
+        self.plot_window.set_max_duration(float(new_duration_int))
 
     def open_admin_panel(self):
         # The correct password
@@ -542,21 +697,23 @@ class Bronkhost(QMainWindow):
             self.win.label_In_Out.setStyleSheet("color: gray;")
 
     def setPoint(self):
-        # Do not try to send a setpoint if the device is offline.
-        if self.is_offline:
+        # *** FIX 2: Guard against running while offline ***
+        if self.is_offline or not self.connection_successful:
+            print("Set point skipped: Device is offline.")
             return
 
         bar_setpoint = self.win.setpoint.value()
         print(f"Bar setpoint set to: {bar_setpoint} {self.unit}")
         self.plot_window.set_setpoint_value(bar_setpoint)
+
         if self.capacity > 0:
-            # Convert absolute setpoint to a percentage
             propar_value = self.bar_to_propar(bar_setpoint, self.capacity)
             self.instrument.writeParameter(9, propar_value)
 
             # --- Re-engage control mode every time setpoint changes ---
-            if self.valve_status == "PID":  # Only send if in PID mode
-                self.instrument.writeParameter(12, 0)  # 'Setpoint Control' command
+            # *** FIX 3: Ensure the PID command is sent to activate the new setpoint ***
+            if self.valve_status == "PID":
+                self.instrument.writeParameter(12, 0)  # 'PID Control' command
         else:
             print("Warning: Cannot set point, device capacity is unknown or zero.")
 
@@ -699,7 +856,8 @@ class THREADFlow(QtCore.QThread):
                     else:
                         self.DEVICE_STATUS_UPDATE.emit('Normal')
 
-                timestamp = time.monotonic()
+                #timestamp = time.monotonic()
+                timestamp = time.time()
                 bar_measure = self.propar_to_bar_func(raw_measure, self.capacity)
                 self.MEAS.emit(timestamp, bar_measure)
 

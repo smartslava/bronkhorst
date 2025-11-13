@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>369</width>
-    <height>694</height>
+    <height>771</height>
    </rect>
   </property>
   <property name="font">
@@ -202,7 +202,7 @@
         <property name="maximumSize">
          <size>
           <width>1000</width>
-          <height>300</height>
+          <height>280</height>
          </size>
         </property>
         <property name="font">
@@ -448,17 +448,42 @@
            </property>
           </widget>
          </item>
-         <item row="4" column="1">
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QGroupBox" name="groupBox_6">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>80</height>
+         </size>
+        </property>
+        <property name="font">
+         <font>
+          <pointsize>10</pointsize>
+          <weight>75</weight>
+          <bold>true</bold>
+         </font>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QGroupBox::title {color: rgba(156, 162, 149, 1.0); }</string>
+        </property>
+        <property name="title">
+         <string>Time Plot</string>
+        </property>
+        <layout class="QGridLayout" name="gridLayout_3">
+         <item row="0" column="2">
           <widget class="QPushButton" name="plotButton">
            <property name="minimumSize">
             <size>
-             <width>90</width>
+             <width>50</width>
              <height>35</height>
             </size>
            </property>
            <property name="maximumSize">
             <size>
-             <width>200</width>
+             <width>100</width>
              <height>50</height>
             </size>
            </property>
@@ -470,7 +495,47 @@
             </font>
            </property>
            <property name="text">
-            <string>Time Plot</string>
+            <string>Plot!</string>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="0">
+          <widget class="QLabel" name="label_4">
+           <property name="maximumSize">
+            <size>
+             <width>200</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="font">
+            <font>
+             <pointsize>16</pointsize>
+             <weight>75</weight>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="text">
+            <string>History (s):</string>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="QSpinBox" name="plot_duration_spinbox">
+           <property name="minimumSize">
+            <size>
+             <width>90</width>
+             <height>35</height>
+            </size>
+           </property>
+           <property name="font">
+            <font>
+             <pointsize>16</pointsize>
+             <weight>75</weight>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="maximum">
+            <number>3600</number>
            </property>
           </widget>
          </item>
