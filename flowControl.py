@@ -6,7 +6,7 @@ import qtpy
 Created on Wed Jun 21 15:26:36 2023
 @author: SALLEJAUNE & Slava Smartsev
 """
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 import pathlib, os
 os.environ['QT_API'] = 'pyqt6'
 from admin_window import AdminWindow
@@ -27,6 +27,47 @@ from PyQt6.QtCore import Qt
 from collections import deque
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+import configparser
+
+
+def load_configuration():
+    config = configparser.ConfigParser()
+    # Determine the folder where THIS python file is located
+    script_dir = os.path.dirname(os.path.abspath('config.ini'))
+    config_path = os.path.join(script_dir, 'config.ini')
+
+    # Default values in case file is missing
+    defaults = {
+        'Connection': {'default_com_port': 'COM1'},
+        'Thread': {'thread_sleep_time': '0.2'},
+        'Plotting': {
+            'max_history': '24000',
+            'default_duration': '10',
+
+        },
+        'Security': {'admin_password': 'appli'},
+        'UI': {'window_title': 'LOA Pressure Control'}
+    }
+
+    # Load the file
+    # Read from the absolute path
+    if os.path.exists(config_path):
+        print(f"Loading config from: {config_path}")  # Debug print
+        config.read(config_path)
+    else:
+        print(f"Config not found at {config_path}, creating defaults.")
+        config.read_dict(defaults)
+        with open(config_path, 'w') as f:
+            config.write(f)
+
+    return config
+
+
+# Load config globally or pass it down
+APP_CONFIG = load_configuration()
+
+
+
 # --- Auto-detect COM ports ---
 
 try:
@@ -138,10 +179,11 @@ class TimeAxisItem(pg.AxisItem):
 class PlotWindow(QMainWindow):
     # ... (other code)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, max_history=24000, default_duration=10.0,
+                 p_color='#FFFF00', s_color='#FF0000'):
         # 1. Initialize the QMainWindow superclass
         super(PlotWindow, self).__init__(parent)
-
+        self.max_duration = float(default_duration)
         self.setWindowTitle('Real-Time Pressure Plot')
 
         self.graphWidget = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
@@ -159,20 +201,21 @@ class PlotWindow(QMainWindow):
         self.graphWidget.getAxis('left').setPen('w')
 
         # 4. Initialize Data Storage (MAX_HISTORY_POINTS needs to be defined near the class)
-        MAX_HISTORY_POINTS = 24000 #around 1 hour
-        self.time_data = deque(maxlen=MAX_HISTORY_POINTS)
-        self.pressure_data = deque(maxlen=MAX_HISTORY_POINTS)
-        self.setpoint_data = deque(maxlen=MAX_HISTORY_POINTS)
+        #MAX_HISTORY_POINTS = 24000 #around 1 hour
+        self.time_data = deque(maxlen=int(max_history))
+        self.pressure_data = deque(maxlen=int(max_history))
+        self.setpoint_data = deque(maxlen=int(max_history))
         #self.start_time = time.monotonic()
 
 
-        self.max_duration = 10.0  # Default visible duration in seconds
+        #self.max_duration = 10.0  # Default visible duration in seconds
 
         # 5. Initialize Plot Lines
-        pen = pg.mkPen(color=(255, 255, 0), width=2)
+        pen = pg.mkPen(color=p_color, width=2)
         self.data_line = self.graphWidget.plot(list(self.time_data), list(self.pressure_data), pen=pen)
 
-        setpoint_pen = pg.mkPen(color=(255, 0, 0), width=1.5)
+        # --- Setpoint Line ---
+        setpoint_pen = pg.mkPen(color=s_color, width=1.5)  # slightly thinner
         self.setpoint_line = self.graphWidget.plot(pen=setpoint_pen)
 
         # 6. Initialize Setpoint State
@@ -263,12 +306,14 @@ class PlotWindow(QMainWindow):
 
 class Bronkhost(QMainWindow):
 
-    def __init__(self, com=None, name=None, parent=None):
+    def __init__(self, com=None, config=None, parent=None):
         if com is None:
             # If no port was given, maybe pop up the selection dialog right here!
             # Or print an error, etc.
             print("Error: No COM port was provided.")
             return  # Stop initialization
+
+        self.config = config  # Store config for later use
 
         super(Bronkhost, self).__init__(parent)
         self.is_offline = False
@@ -318,10 +363,12 @@ class Bronkhost(QMainWindow):
         # -------------------------------------------------------------------
         # *** START SUCCESSFUL CONNECTION BLOCK ***
         # -------------------------------------------------------------------
-        self.setWindowTitle(f"{name} v{__version__}")
+        title = self.config['UI'].get('window_title', 'LOA Pressure Control')
+        self.setWindowTitle(f"{title} v{__version__}")
+        #self.setWindowTitle(f"{name} v{__version__}")
         self.icon = str(p.parent) + sepa + 'icons' + sepa
         self.setWindowIcon(QIcon(self.icon + 'LOA3.png'))
-        self.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
+        #self.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
         self.raise_()
 
         # Set valve to closed on startup
@@ -333,7 +380,10 @@ class Bronkhost(QMainWindow):
         self.read_device_info()
 
         # 1. Initialize PlotWindow
-        self.plot_window = PlotWindow(self)
+        #self.plot_window = PlotWindow(self)
+        hist = self.config['Plotting'].getint('max_history', 24000)
+        dur = self.config['Plotting'].getfloat('default_duration', 10.0)
+        self.plot_window = PlotWindow(self, max_history=hist, default_duration=dur)
 
         # 2. Setup UI connections
         self.actionButton()
@@ -342,7 +392,55 @@ class Bronkhost(QMainWindow):
         self.read_initial_setpoint()
 
         # 4. Initialize and start the thread
-        self.threadFlow = THREADFlow(self, capacity=self.capacity)
+        try:
+            thread_time = self.config['Thread'].getfloat('thread_sleep_time', 0.2)
+        except KeyError:
+            # Fallback if [Thread] section is missing entirely in the file
+            thread_time = 0.2
+            print("Warning: [Thread] section missing in config, using default 0.2 s")
+
+        print(f"Refresh thread_time loaded: {thread_time}")
+        max_possible_seconds = hist * thread_time
+        print(f"Buffer Capacity: {max_possible_seconds:.1f} seconds")
+
+        # 3. Initialize PlotWindow
+        # We read the default duration, but we cap it immediately to be safe
+        config_duration = self.config['Plotting'].getfloat('default_duration', 10.0)
+
+        # If config asks for 1000s but we only have 500s of memory, cap it.
+        startup_duration = min(config_duration, max_possible_seconds)
+
+        #self.plot_window = PlotWindow(self, max_history=hist, default_duration=startup_duration)
+        col_pressure = self.config['Plotting'].get('pressure_color', '#FFFF00')
+        col_setpoint = self.config['Plotting'].get('setpoint_color', '#FF0000')
+
+        # 2. Initialize PlotWindow with ALL arguments
+        # We pass max_history, default_duration, AND the two colors
+        self.plot_window = PlotWindow(
+            self,
+            max_history=hist,
+            default_duration=startup_duration,
+            p_color=col_pressure,
+            s_color=col_setpoint
+        )
+
+        # 4. CONFIGURE THE SPINBOX
+        if hasattr(self.win, 'plot_duration_spinbox'):
+            # Set the hard limit so user cannot click arrow up past this point
+            self.win.plot_duration_spinbox.setMaximum(int(max_possible_seconds))
+
+            # Update the displayed value to match what we actually sent to PlotWindow
+            self.win.plot_duration_spinbox.setValue(int(startup_duration))
+
+            # Add a tooltip so the user knows why it stops there
+            self.win.plot_duration_spinbox.setToolTip(
+                f"Max history is {int(max_possible_seconds)}s. "
+                f"Limited by buffer size ({hist} points) "
+                f"and thread time ({thread_time}s)."
+            )
+
+        self.threadFlow = THREADFlow(self, capacity=self.capacity, thread_sleep_time=thread_time)
+        #self.threadFlow = THREADFlow(self, capacity=self.capacity)
         self.threadFlow.start()
 
         # 5. Connect thread signals
@@ -549,7 +647,8 @@ class Bronkhost(QMainWindow):
 
     def open_admin_panel(self):
         # The correct password
-        CORRECT_PASSWORD = "appli"
+        #CORRECT_PASSWORD = "appli"
+        CORRECT_PASSWORD = self.config['Security'].get('admin_password', 'appli')
 
         # Pop up the password dialog
         password, ok = QInputDialog.getText(self,
@@ -824,30 +923,36 @@ class THREADFlow(QtCore.QThread):
     DEBUG_MEAS = QtCore.pyqtSignal(float)
     DEVICE_STATUS_UPDATE = QtCore.pyqtSignal(str)
 
-    def __init__(self, parent, capacity):
+    def __init__(self, parent, capacity, thread_sleep_time):
         super(THREADFlow, self).__init__(parent)
         self.parent = parent
         self.instrument = self.parent.instrument
         self.propar_to_bar_func = self.parent.propar_to_bar
         self.capacity = capacity
         self.stop = False
+        self.thread_sleep_time = float(thread_sleep_time)
 
     def run(self):
         while not self.stop:
+            # 1. Mark the start time of this cycle
+            loop_start_time = time.time()
+
             try:
-                # --- Perform all reads first ---
+                # --- Perform all reads ---
+                # This is the "Work" that causes latency (e.g., takes 0.05s)
                 alarm_status = self.instrument.readParameter(28)
                 raw_measure = self.instrument.readParameter(8)
-                valve1_output = self.instrument.readParameter(55)  # Read the valve output here as well
+                valve1_output = self.instrument.readParameter(55)
 
-                # If a critical read like pressure fails (returns None),
-                # we assume the connection is lost.
+                # --- Offline Logic ---
+                # If critical read fails (None), device is disconnected.
                 if raw_measure is None:
                     self.DEVICE_STATUS_UPDATE.emit('offline')
-                    time.sleep(1)
+                    # If offline, don't do drift calculation, just wait 1s and retry
+                    time.sleep(1.0)
                     continue
 
-                # --- If reads were successful, process the data ---
+                # --- Status Logic ---
                 if alarm_status is not None:
                     if alarm_status & 1:
                         self.DEVICE_STATUS_UPDATE.emit('Error')
@@ -856,24 +961,38 @@ class THREADFlow(QtCore.QThread):
                     else:
                         self.DEVICE_STATUS_UPDATE.emit('Normal')
 
-                #timestamp = time.monotonic()
+                # --- Emission Logic (Pressure) ---
+                # We use the current time as the timestamp for the graph
                 timestamp = time.time()
                 bar_measure = self.propar_to_bar_func(raw_measure, self.capacity)
                 self.MEAS.emit(timestamp, bar_measure)
 
-                # STEP 2: Calculate the value and EMIT the signal
+                # --- Emission Logic (Valve) ---
                 if valve1_output is not None:
+                    # Ensure the helper function is accessible here
                     current_valve_value = calculate_valve_percentage(valve1_output)
-                    # Emit the signal with the calculated percentage
                     self.VALVE1_MEAS.emit(current_valve_value)
-                # No 'else' block is needed here, because if the read fails,
-                # no signal is sent, and the display simply won't update for that cycle.
+
+                # --- SMART SLEEP (Drift Correction) ---
+                # 1. Calculate how long the read/emit process took
+                work_duration = time.time() - loop_start_time
+                # 4. PRINT IT (Temporary Debug)
+                #print(f"Hardware IO took: {work_duration:.4f} seconds")
+                # 2. Calculate remaining time to match the configured thread_sleep_time
+                sleep_time = self.thread_sleep_time - work_duration
+
+                # 3. Only sleep if we have time left.
+                # If work_duration > thread_sleep_time, the hardware is slower than the config,
+                # so we run immediately without sleeping.
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
             except Exception as e:
                 self.DEVICE_STATUS_UPDATE.emit('offline')
                 print(f"Error reading from instrument: {e}")
+                # On exception, wait a safe fixed amount before retrying
+                time.sleep(1.0)
 
-            time.sleep(0.15)
         print('Measurement thread stopped.')
 
     def stopThread(self):
@@ -886,24 +1005,36 @@ if __name__ == '__main__':
     #appli.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
 
     main_window = None
+    # Load config
+    APP_CONFIG = load_configuration()
+    default_port = APP_CONFIG['Connection'].get('default_com_port', '')
 
     while True:  # Start the selection loop
-        available_ports = [port.device for port in serial.tools.list_ports.comports()]
+        #available_ports = [port.device for port in serial.tools.list_ports.comports()]
+        ports_objects = serial.tools.list_ports.comports()
+        available_ports = [port.device for port in ports_objects]
 
         if not available_ports:
             QMessageBox.critical(None, "Connection Error",
                                  "No COM ports found. Please ensure your device is connected.")
             sys.exit()  # Exit if no ports are found at all
 
+        # --- SORTING MAGIC ---
+        # If the default port is in the list, move it to index 0
+        if default_port in available_ports:
+            available_ports.insert(0, available_ports.pop(available_ports.index(default_port)))
+
         selected_port, ok = QInputDialog.getItem(
-            None, "Select COM Port", "Connect to Bronkhorst device on:",
+            None, "Select COM Port",
+            "Connect to Bronkhorst device on:",
             available_ports, 0, False
         )
 
         if ok and selected_port:
             print(f"Attempting to connect to {selected_port}...")
             # Create a temporary instance to check the connection
-            main_window = Bronkhost(com=selected_port,name="LOA Pressure Control")
+            main_window = Bronkhost(com=selected_port, config=APP_CONFIG)
+            #main_window = Bronkhost(com=selected_port,name="LOA Pressure Control")
 
             # Check the flag we created. If it's True, the connection worked.
             if main_window.connection_successful:

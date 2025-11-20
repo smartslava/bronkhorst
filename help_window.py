@@ -32,6 +32,10 @@ class HelpWindow(QDialog):
             <li>Upon startup, the program prioritizes safety by immediately <b>sending a command to close the inlet valve</b> and then queries the device to <b>read and display the last known setpoint</b>.</li>
             <li>The setpoint value can be modified even while the valve is closed, allowing the user to prepare the next setting in advance.</li>
             <li>To ensure a safe state upon exit, the application again sends a command to <b>close the valve</b> before terminating the connection.</li>
+            <li>Configuration Initialization: On launch, the system parses config.ini using the configparser library. 
+            It loads critical runtime parameters such as the thread polling interval (program refresh rate), 
+            circular buffer size (plot history), and plot styling (line colors). 
+            It also validates the data types (converting floats/integers) to prevent runtime errors.</li>
         </ul>
         
         <h4>User Tag</h4>
@@ -41,7 +45,8 @@ class HelpWindow(QDialog):
         
         <h4>Monitors</h4>
         <ul>
-          <li><b>Actual Mode:</b> Displays the current control mode (e.g., Closed, PID).</li>
+          <li><b>Device Status:</b> Displays the current device status (Normal, Warning, Error).</li>
+          <li><b>Actual Mode:</b> Displays the current control mode (e.g., PID, Closed).</li>
           <li><b>In/Out Status (%):</b> Shows the real-time opening of the P-800's two control valves - an inlet (In) and a relief (Out). The percentage corresponds to:
             <ul>
               <li><b>Above 50%:</b> The inlet valve is opening.</li>
@@ -52,17 +57,24 @@ class HelpWindow(QDialog):
             <small><i>Sometimes shows 0% while both valves are closed, need to debug...</i></small>
           </li>
           <li><b>Actual P (bar):</b> Displays the real-time pressure measured by the controller.</li>
-          
         </ul>
-        
         <h4>Time Plot</h4>
         <ul>
-        <li><b>History(s):</b> Set the desired total span of time visible in the plot window. The value is sent when you press Enter or when the input box loses focus.</li>
-        <li><b>Plot! Button:</b> Opens a real-time graph of pressure (yellow) and setpoint (red) over time.</li>
-        <li><b>Plot! Button:</b> Opens a real-time graph of pressure (yellow) and setpoint (red) over time.</li>
+        <li><b>History(s):</b> Set the desired total span of time visible in the plot window. The value is sent when you 
+        press Enter or when the input box loses focus. The application's temporal memory is finite and determined by the
+         product of the circular buffer capacity (max_history) and the thread polling interval (thread_sleep_time). 
+         Once this limit is reached, the oldest data points are automatically discarded to make room for new measurements.</li>
+        <li><b>Plot! Button:</b> Opens a real-time graph of pressure (default: yellow) and setpoint (default: red) over time. The graph's 
+        visual style is customizable via the config.ini file, where users can define specific hexadecimal color codes 
+        (e.g., #FFFF00) to distinguish between the real-time pressure reading and the setpoint target. Data is acquired and stored 
+        using absolute Unix timestamps (UTC) to ensure long-term consistency, while a custom axis renderer dynamically 
+        converts these values to the local time zone for display.</li>
         <li><b>Right-Click Menu (Plot Window):</b> Right-clicking inside the plot window provides quick access to data handling features, including:
         <ul style="list-style-type: circle; margin-top: 5px;">
-            <li><span style="font-weight: bold;">Export Data:</span> Save the entire history buffer (timestamps, pressure measurements, setpoints) to a file (e.g., CSV).</li>
+            <li><span style="font-weight: bold;">Export Data:</span> Save the entire history buffer (timestamps, pressure 
+            measurements, setpoints) to a file (e.g., CSV). While the live graph displays familiar local time, the application 
+            saves and stores all data using Unix timestamps (seconds since 1970) to ensure absolute precision and easy 
+            export to analysis tools.</li>
             <li><span style="font-weight: bold;">Save Image:</span> Export the current plot view as an image file (e.g., PNG).</li>
         </ul>
     </li>
@@ -73,11 +85,11 @@ class HelpWindow(QDialog):
         <ul>
         <li><b>P Set (bar):</b> Set the desired pressure in bar. The value is sent when you press Enter or when the input box loses focus.</li>
         <li><b>Valve Mode Buttons:</b> The <b>PID</b> button enables automatic control, while the <b>Closed</b> button fully closes the inlet valve.</li>
-        <li><b>Advanced Button:</b> Opens a password-protected panel for advanced settings.</li>
+        <li><b>Advanced Button:</b> Opens a password-protected panel for advanced settings. The password can be modified in the config.ini file.</li>
         </ul>
         
         <h4>Advanced Settings</h4>
-        <p>This panel is accessed via the 'Advanced' button and requires a password. 
+        <p>This panel is accessed via the 'Advanced' button and requires a password. The password can be modified in the config.ini file. 
         Upon opening, the software reads and displays the following settings from the device. 
         After editing the values, press the 'SET ALL' button to save them back to the device:</p>
         <ul>
