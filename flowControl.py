@@ -13,7 +13,7 @@ from admin_window import AdminWindow
 from help_window import HelpWindow
 import propar
 from PyQt6 import QtCore, uic
-from PyQt6.QtWidgets import QApplication, QWidget, QMainWindow, QInputDialog, QMessageBox, QLineEdit
+from PyQt6.QtWidgets import (QApplication, QWidget, QMainWindow, QInputDialog, QMessageBox, QLineEdit, QButtonGroup)
 
 import datetime as dt
 import pyqtgraph as pg
@@ -39,6 +39,7 @@ def load_configuration():
     # Default values in case file is missing
     defaults = {
         'Connection': {'default_com_port': 'COM1'},
+        'Safety': {'max_set_pressure': '100.0'},
         'Thread': {'thread_sleep_time': '0.2'},
         'Plotting': {
             'max_history': '24000',
@@ -321,6 +322,20 @@ class Bronkhost(QMainWindow):
         p = pathlib.Path(__file__)
         sepa = os.sep
         self.win = uic.loadUi('flow.ui', self)
+
+        # --- GROUPING RADIO BUTTONS ---
+        # This ensures they are mutually exclusive and easier to manage
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.addButton(self.win.radioPID)
+        self.mode_group.addButton(self.win.radioShut)
+
+        # Set ID for easier logic later (1=PID, 0=Shut)
+        self.mode_group.setId(self.win.radioPID, 1)
+        self.mode_group.setId(self.win.radioShut, 0)
+
+        self.win.setpoint.setGroupSeparatorShown(False)
+
+
         self.win.setpoint.setGroupSeparatorShown(False)
 
         # Initialize plot_window to None to prevent AttributeError if connection fails
@@ -469,9 +484,13 @@ class Bronkhost(QMainWindow):
             if not self.is_offline:
                 print("Connection to device lost...")
                 self.is_offline = True
+            self.win.device_status_label.setText("Offline")
 
-            self.win.device_status_label.setText('Offline')
-            self.win.device_status_label.setStyleSheet("color: red;")
+            self.win.device_status_label.setStyleSheet("color: red")
+
+            # DISABLE RADIO BUTTONS
+            self.win.radioPID.setEnabled(False)
+            self.win.radioShut.setEnabled(False)
 
             # Stop flickering, disable UI, gray out everything
             self.flicker_timer.stop()
@@ -482,19 +501,17 @@ class Bronkhost(QMainWindow):
             self.win.inlet_valve_label.setText("...")
 
             self.win.plotButton.setEnabled(False)
-            self.win.openButton.setEnabled(False)
-            self.win.closeButton.setEnabled(False)
             self.win.setpoint.setEnabled(False)
-            if hasattr(self.win, 'admin_button'):
-                self.win.admin_button.setEnabled(False)
+            self.win.plot_duration_spinbox.setEnabled(False)
+            self.win.purgeButton.setEnabled(False)
+            self.win.admin_button.setEnabled(False)
+            self.win.plotButton.setEnabled(False)
 
-            self.win.openButton.setStyleSheet("background-color: gray;")
-            self.win.closeButton.setStyleSheet("background-color: gray;")
-            self.win.plotButton.setStyleSheet("background-color: gray;")
+
 
             gray_text_style = "color: gray;"
             for attr in [
-                'setpoint_label', 'actual_mode_label', 'measure_label', 'measure',
+                'history_label','setpoint_label', 'actual_mode_label', 'measure_label', 'measure',
                 'mode_label', 'label_In_Out', 'inlet_valve_label', 'user_tag_label'
             ]:
                 if hasattr(self.win, attr):
@@ -532,8 +549,19 @@ class Bronkhost(QMainWindow):
 
                 # Re-enable UI
                 self.win.plotButton.setEnabled(True)
-                self.win.openButton.setEnabled(True)
-                self.win.closeButton.setEnabled(True)
+                self.win.plot_duration_spinbox.setEnabled(True)
+                self.win.radioPID.setEnabled(True)
+                self.win.purgeButton.setEnabled(True)
+                self.win.radioShut.setEnabled(True)
+                # Restore correct selection visually based on internal state
+                if self.valve_status == "PID":
+                    self.win.radioPID.setChecked(True)  # Check PID
+                    self.win.label_valve_status.setText("PID")
+                elif self.valve_status == "closed":
+                    self.win.radioShut.setChecked(True)  # Check Shut
+                    self.win.label_valve_status.setText("Shut")
+                    if not self.flicker_timer.isActive():
+                        self.flicker_timer.start(500)
                 self.win.setpoint.setEnabled(True)
                 if hasattr(self.win, 'admin_button'):
                     self.win.admin_button.setEnabled(True)
@@ -541,7 +569,7 @@ class Bronkhost(QMainWindow):
                 # Restore colors
                 default_label_color = "color: white;"
                 for attr in [
-                    'setpoint_label', 'actual_mode_label', 'measure_label', 'measure',
+                    'history_label','setpoint_label', 'actual_mode_label', 'measure_label', 'measure',
                     'mode_label', 'user_tag_label', 'inlet_valve_label', 'label_In_Out'
                 ]:
                     if hasattr(self.win, attr):
@@ -549,14 +577,14 @@ class Bronkhost(QMainWindow):
 
                 # Restore buttons and valve labels
                 if self.valve_status == "PID":
-                    self.win.openButton.setStyleSheet("background-color: green;")
-                    self.win.closeButton.setStyleSheet("background-color: gray;")
+                    #self.win.openButton.setStyleSheet("background-color: green;")
+                    #self.win.closeButton.setStyleSheet("background-color: gray;")
                     self.win.label_valve_status.setText("PID")
                     self.win.label_valve_status.setStyleSheet("color: white;")
                 elif self.valve_status == "closed":
-                    self.win.openButton.setStyleSheet("background-color: gray;")
-                    self.win.closeButton.setStyleSheet("background-color: red;")
-                    self.win.label_valve_status.setText("Closed")
+                    #self.win.openButton.setStyleSheet("background-color: gray;")
+                    #self.win.closeButton.setStyleSheet("background-color: red;")
+                    self.win.label_valve_status.setText("Shut")
                     if not self.flicker_timer.isActive():
                         self.flicker_timer.start(500)
 
@@ -603,15 +631,13 @@ class Bronkhost(QMainWindow):
         self.win.log_display.ensureCursorVisible()
 
     def actionButton(self):
-        self.win.openButton.clicked.connect(self.valve_PID)
-        self.win.closeButton.clicked.connect(self.valve_close)
+        self.mode_group.buttonClicked.connect(self.on_mode_changed)
+
         self.win.setpoint.editingFinished.connect(self.setPoint)
-        if hasattr(self.win, 'plotButton'):
-            self.win.plotButton.clicked.connect(self.show_plot_window)
-        if hasattr(self.win, 'admin_button'):
-            self.win.admin_button.clicked.connect(self.open_admin_panel)
-        if hasattr(self.win, 'help_button'):
-            self.win.help_button.clicked.connect(self.show_help_window)
+        self.win.purgeButton.clicked.connect(self.purge_system)
+        self.win.plotButton.clicked.connect(self.show_plot_window)
+        self.win.admin_button.clicked.connect(self.open_admin_panel)
+        self.win.help_button.clicked.connect(self.show_help_window)
 
         # Safely connect the plot duration spinbox
         if self.plot_window is not None and hasattr(self.win, 'plot_duration_spinbox'):
@@ -696,10 +722,20 @@ class Bronkhost(QMainWindow):
             if capacity is not None:
                 self.capacity = float(capacity)
                 print(f"Device Capacity Read: {self.capacity}")
+
+                # Default to a high number (or self.capacity) if missing in config
+                safety_limit = self.config['Safety'].getfloat('max_set_pressure', self.capacity)
+
+                # Determine the effective maximum:
+                # It is the LOWER of the physical device limit and the config safety limit
+                effective_max = min(self.capacity, safety_limit)
+
+                print(f"Safety Limit: {safety_limit} | Effective UI Max: {effective_max}")
                 # --- Configure the setpoint box's range and precision ---
                 if hasattr(self.win, 'setpoint'):
-                    self.win.setpoint.setMaximum(self.capacity)
+                    self.win.setpoint.setMaximum(effective_max)
                     self.win.setpoint.setDecimals(2)
+                    self.win.setpoint.setToolTip(f"Config limited to {effective_max} (Physical: {self.capacity})")
             else:
                 print("Warning: Could not read device capacity (param 21).")
 
@@ -740,50 +776,101 @@ class Bronkhost(QMainWindow):
         self.plot_window.set_setpoint_value(bar_setpoint)
 
     def show_plot_window(self):
-        """ Shows the plot window when the button is clicked. """
-        self.plot_window.show()
+        """
+        Shows the plot window. If already open, brings it to the front
+        and restores it if minimized.
+        """
+        if self.plot_window is None:
+            return
 
+        # 1. Un-minimize and make visible
+        # showNormal() is better than show() here because if the user
+        # minimized the window to the taskbar, this forces it back open.
+        self.plot_window.showNormal()
+
+        # 2. Bring the window to the top of the application's window stack
+        self.plot_window.raise_()
+
+        # 3. Tell the Operating System to give this window focus (keyboard/mouse)
+        self.plot_window.activateWindow()
+
+    def on_mode_changed(self, button):
+        """Central handler for radio button clicks"""
+        if button == self.win.radioPID:
+            self.valve_PID()
+        elif button == self.win.radioShut:
+            self.valve_close()
+
+    def purge_system(self):
+        """
+        Sets the setpoint to 0.0 and switches the device to PID mode
+        to evacuate pressure.
+        """
+        if self.is_offline or not self.connection_successful:
+            print("Purge skipped: Device is offline.")
+            return
+
+        print("--- Purge Sequence Initiated ---")
+
+        # 1. Update the UI Spinbox to 0.0
+        self.win.setpoint.setValue(0.0)
+
+        # 2. Send the 0.0 setpoint to the device immediately
+        # We call self.setPoint() manually to ensure the command (Param 9) is sent
+        self.setPoint()
+
+        # 3. Force mode to PID (Param 12 = 0)
+        # We call valve_PID() to handle the device command AND update the UI
+        # (radio buttons, status labels, colors)
+        self.valve_PID()
 
     def valve_PID(self):
         print('Valve PID controlled')
-        #stop flickering
+
+        # 1. Update UI Visuals
         self.flicker_timer.stop()
         self.win.label_valve_status.setStyleSheet("color: white;")
         self.win.label_valve_status.setText('PID')
-        self.win.openButton.setStyleSheet("background-color: green")
-        self.win.closeButton.setStyleSheet("background-color: gray")
-        self.instrument.writeParameter(12, 0)  # 'PID Control' command
-        self.valve_status = "PID"
-        time.sleep(0.2)
+
+        # Ensure the radio button matches the logic
+        self.win.radioPID.setChecked(True)
+
+        # Reset labels to "Waiting" state
         if hasattr(self.win, 'inlet_valve_label'):
             self.win.inlet_valve_label.setStyleSheet("color: white;")
             self.win.inlet_valve_label.setText("... %")
         if hasattr(self.win, 'label_In_Out'):
             self.win.label_In_Out.setStyleSheet("color: white;")
+
+        # 2. Send Command to Device
+        self.instrument.writeParameter(12, 0)  # 'PID Control' command
+        self.valve_status = "PID"
+
+        # 3. Attempt to read the new valve value
+        time.sleep(0.2)
         try:
             valve1_output = self.instrument.readParameter(55)
+
             if valve1_output is not None:
                 current_valve_value = calculate_valve_percentage(valve1_output)
                 self.update_inlet_valve_display(current_valve_value)
             else:
-                # This block runs if the read value is None
+                # If read returns None (communication glitch)
                 if hasattr(self.win, 'inlet_valve_label'):
                     self.win.inlet_valve_label.setText("...")
+
         except Exception as e:
+            # If read throws an error
             print(f"Failed to perform initial valve read: {e}")
             if hasattr(self.win, 'inlet_valve_label'):
                 self.win.inlet_valve_label.setText("...")
-        except Exception as e:
-            print(f"Failed to perform initial valve read: {e}")
-            if hasattr(self.win, 'inlet_valve_label'):
-                self.win.inlet_valve_label.setText("... %")
 
 
     def valve_close(self):
         print('Valve closed')
-        self.win.label_valve_status.setText('Closed')
-        self.win.closeButton.setStyleSheet("background-color: red")
-        self.win.openButton.setStyleSheet("background-color: gray")
+        self.win.label_valve_status.setText('Shut')
+        #self.win.closeButton.setStyleSheet("background-color: red")
+        #self.win.openButton.setStyleSheet("background-color: gray")
         self.flicker_timer.start(500)  # 500 ms interval
         self.instrument.writeParameter(12, 3)  # 'Valve Closed' command
         self.valve_status = "closed"
@@ -842,7 +929,7 @@ class Bronkhost(QMainWindow):
             self.win.measure.setText(f"{s_percent:.2f}")
 
         elif self.valve_status == "Closed":
-            self.label_win.valve_status.setText('Closed')
+            self.label_win.valve_status.setText('Shut')
 
 
     def closeEvent(self, event):
@@ -865,7 +952,7 @@ class Bronkhost(QMainWindow):
             if hasattr(self, 'instrument'):
                 self.instrument.writeParameter(12, 3)
                 print("Closing valve...")
-                self.win.label_valve_status.setText('Closed')
+                self.win.label_valve_status.setText('Shut')
                 time.sleep(0.5)
                 self.instrument.master.propar.stop()
                 print("Connection closed.")
@@ -991,7 +1078,7 @@ class THREADFlow(QtCore.QThread):
                 self.DEVICE_STATUS_UPDATE.emit('offline')
                 print(f"Error reading from instrument: {e}")
                 # On exception, wait a safe fixed amount before retrying
-                time.sleep(1.0)
+                time.sleep(2.0)
 
         print('Measurement thread stopped.')
 

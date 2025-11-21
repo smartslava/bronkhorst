@@ -34,7 +34,7 @@ class HelpWindow(QDialog):
             <li>To ensure a safe state upon exit, the application again sends a command to <b>close the valve</b> before terminating the connection.</li>
             <li>Configuration Initialization: On launch, the system parses config.ini using the configparser library. 
             It loads critical runtime parameters such as the thread polling interval (program refresh rate), 
-            circular buffer size (plot history), and plot styling (line colors). 
+            circular buffer size (plot history), plot styling (line colors), and the maximum pressure safety limit. 
             It also validates the data types (converting floats/integers) to prevent runtime errors.</li>
         </ul>
         
@@ -46,7 +46,7 @@ class HelpWindow(QDialog):
         <h4>Monitors</h4>
         <ul>
           <li><b>Device Status:</b> Displays the current device status (Normal, Warning, Error).</li>
-          <li><b>Actual Mode:</b> Displays the current control mode (e.g., PID, Closed).</li>
+          <li><b>Actual Mode:</b> Displays the current control mode (e.g., PID, Shut).</li>
           <li><b>In/Out Status (%):</b> Shows the real-time opening of the P-800's two control valves - an inlet (In) and a relief (Out). The percentage corresponds to:
             <ul>
               <li><b>Above 50%:</b> The inlet valve is opening.</li>
@@ -60,11 +60,11 @@ class HelpWindow(QDialog):
         </ul>
         <h4>Time Plot</h4>
         <ul>
-        <li><b>History(s):</b> Set the desired total span of time visible in the plot window. The value is sent when you 
+        <li><b>History (s):</b> Set the desired total span of time visible in the plot window. The value is sent when you 
         press Enter or when the input box loses focus. The application's temporal memory is finite and determined by the
          product of the circular buffer capacity (max_history) and the thread polling interval (thread_sleep_time). 
          Once this limit is reached, the oldest data points are automatically discarded to make room for new measurements.</li>
-        <li><b>Plot! Button:</b> Opens a real-time graph of pressure (default: yellow) and setpoint (default: red) over time. The graph's 
+        <li><b>Plot Button:</b> Opens a real-time graph of pressure (default: yellow) and setpoint (default: red) over time. The graph's 
         visual style is customizable via the config.ini file, where users can define specific hexadecimal color codes 
         (e.g., #FFFF00) to distinguish between the real-time pressure reading and the setpoint target. Data is acquired and stored 
         using absolute Unix timestamps (UTC) to ensure long-term consistency, while a custom axis renderer dynamically 
@@ -83,8 +83,12 @@ class HelpWindow(QDialog):
         
         <h4>Controls</h4>
         <ul>
-        <li><b>P Set (bar):</b> Set the desired pressure in bar. The value is sent when you press Enter or when the input box loses focus.</li>
-        <li><b>Valve Mode Buttons:</b> The <b>PID</b> button enables automatic control, while the <b>Closed</b> button fully closes the inlet valve.</li>
+        <li><b>P Set (bar):</b> Set the desired pressure in bar. The value is sent when user presses Enter or when the input box loses focus. 
+        The maximum value is limited by the device capacity (physical limit) or the user-defined safety preset "max_set_pressure" in the config.ini file.</li>
+        <li><b>Purge Button:</b> Activates the purge sequence: sets the pressure setpoint to 0.0 bar and switches the device 
+        to PID mode, regardless of the current mode.</li>
+        <li><b>Valve Mode Radio Buttons:</b> The <b>PID</b> button enables automatic control, while the <b>Shut</b> button 
+        fully closes both the input and output valves.</li>
         <li><b>Advanced Button:</b> Opens a password-protected panel for advanced settings. The password can be modified in the config.ini file.</li>
         </ul>
         

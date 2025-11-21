@@ -113,13 +113,16 @@ class AdminWindow(QMainWindow):
             time.sleep(0.1)
 
             print(f"Set and saved new control values: Kp={p_gain}, Ti={i_gain}, Td={d_gain}, Kspeed={speed_gain},Kopen={open_gain}, Knormal={norm_gain},Kstable={stab_gain},Hysteresis={hyster_gain},UserTag={user_tag}")
-            QMessageBox.information(self, "Success", "Control parameters have been updated.")
+
+            #QMessageBox.information(self, "Success", "Control parameters have been updated.")
 
             try:
                 self.main_window.read_device_info()
+                print("Control parameters have been updated.")
                 print("Main window device info refreshed after saving settings.")
             except Exception as e:
                 print(f"Warning: could not refresh device info after saving: {e}")
+
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to set control parameters.\n\nError: {e}")
