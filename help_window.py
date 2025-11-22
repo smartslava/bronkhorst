@@ -113,6 +113,7 @@ class HelpWindow(QDialog):
                <p style='text-align:left; color:gray;'>
                    <i>Version: {self.version}</i>
                </p>
+               <hr>
                """
 
         self.help_text_edit.setHtml(version_info+help_text)
