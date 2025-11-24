@@ -6,17 +6,72 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>197</width>
-    <height>445</height>
+    <width>222</width>
+    <height>443</height>
    </rect>
+  </property>
+  <property name="sizePolicy">
+   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+    <horstretch>0</horstretch>
+    <verstretch>0</verstretch>
+   </sizepolicy>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>222</width>
+    <height>443</height>
+   </size>
   </property>
   <property name="windowTitle">
    <string>MainWindow</string>
   </property>
+  <property name="styleSheet">
+   <string notr="true">QMainWindow {
+	  padding:5px;
+}
+
+QGroupBox {
+	color: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 25);
+    margin-top: 5px;
+}
+
+QGroupBox::title {
+	color: rgba(255, 255, 255, 0.4);
+    subcontrol-origin: margin;
+	subcontrol-position: top left;
+	top: -3px;
+    padding: 0 8px;
+}</string>
+  </property>
   <widget class="QWidget" name="centralwidget">
-   <layout class="QFormLayout" name="formLayout">
-    <item row="0" column="0">
+   <property name="sizePolicy">
+    <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+     <horstretch>0</horstretch>
+     <verstretch>0</verstretch>
+    </sizepolicy>
+   </property>
+   <property name="minimumSize">
+    <size>
+     <width>197</width>
+     <height>0</height>
+    </size>
+   </property>
+   <property name="styleSheet">
+    <string notr="true">QWidget {
+
+    margin: 5px; 
+}</string>
+   </property>
+   <layout class="QHBoxLayout" name="horizontalLayout">
+    <item>
      <widget class="QGroupBox" name="groupBox">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
       <property name="minimumSize">
        <size>
         <width>150</width>
@@ -35,6 +90,9 @@
         <weight>75</weight>
         <bold>true</bold>
        </font>
+      </property>
+      <property name="styleSheet">
+       <string notr="true"/>
       </property>
       <property name="title">
        <string>Control Parameters</string>
@@ -454,7 +512,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>197</width>
+     <width>222</width>
      <height>21</height>
     </rect>
    </property>

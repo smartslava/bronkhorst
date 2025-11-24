@@ -6,7 +6,7 @@ import qtpy
 Created on Wed Jun 21 15:26:36 2023
 @author: SALLEJAUNE & Slava Smartsev
 """
-__version__ = "1.2.0"
+__version__ = "1.2.0-beta"
 import pathlib, os
 os.environ['QT_API'] = 'pyqt6'
 from admin_window import AdminWindow
@@ -39,7 +39,16 @@ def load_configuration():
     # Default values in case file is missing
     defaults = {
         'Connection': {'default_com_port': 'COM1'},
-        'Safety': {'max_set_pressure': '100.0'},
+        'Safety': {
+            'max_set_pressure': '100.0',
+            'set_point_above_tolerance': '1',
+            'set_point_above_delay': '2',
+            'set_point_safe_state': '0.0',
+            'set_point_above_safety_enable': '1',
+            'purge_set_point': '0.0',
+            'purge_shut_delay': '1'
+            # ----------------------
+        },
         'Thread': {'thread_sleep_time': '0.2'},
         'Plotting': {
             'max_history': '24000',
@@ -389,10 +398,15 @@ class Bronkhost(QMainWindow):
         # Set valve to closed on startup
         self.valve_close()
 
+        self.alarm_popup_active = False
+        self.last_reset_time = 0.0
+
         # --- Read device capacity and units ---
         self.capacity = 0.0
         self.unit = ""
+        self.response_alarm_enabled = False
         self.read_device_info()
+        self.configure_response_alarm()
 
         # 1. Initialize PlotWindow
         #self.plot_window = PlotWindow(self)
@@ -464,8 +478,115 @@ class Bronkhost(QMainWindow):
         self.threadFlow.DEBUG_MEAS.connect(self.update_debug_display)
         self.threadFlow.MEAS.connect(self.plot_window.update_plot)
         self.threadFlow.DEVICE_STATUS_UPDATE.connect(self.update_device_status)
+        self.threadFlow.CRITICAL_ALARM.connect(self.handle_critical_alarm)
 
         self.win.title_2.setText('Pressure Control')
+
+    def reset_alarm_cmd(self):
+        """Sends the sequence to reset the instrument alarm."""
+        try:
+            print("Sending Alarm Reset Command...")
+            # Good practice: Send 0 first to clear previous commands
+            self.instrument.writeParameter(114, 0)
+            time.sleep(0.1)
+            # Send 2 to reset the alarm
+            self.instrument.writeParameter(114, 2)
+            time.sleep(0.1)
+            # Send 0 again to finish
+            self.instrument.writeParameter(114, 0)
+            print("Alarm Reset Sent.")
+        except Exception as e:
+            print(f"Failed to reset alarm: {e}")
+
+    def handle_critical_alarm(self, alarm_code):
+        """
+        Handles the CRITICAL_ALARM signal.
+        AUTOMATIC SAFETY SEQUENCE:
+        1. Immediate Visual Update.
+        2. Immediate Reset & Hardware Sync.
+        3. Schedule Shutdown Timer.
+        4. Notify user (Non-blocking logic, Blocking UI).
+        """
+        # 1. Cooldown Check (Prevent spamming)
+        if self.alarm_popup_active:
+            return
+
+        delay_setting = self.config['Safety'].getfloat('set_point_above_delay', 2.0)
+        cooldown_period = delay_setting + 1.0
+        if (time.time() - self.last_reset_time) < cooldown_period:
+            return
+
+        self.alarm_popup_active = True
+        print(f"CRITICAL ALARM {alarm_code}: Executing AUTO-SAFETY sequence.")
+
+        # ----------------------------------------------------------
+        # STEP 1: IMMEDIATE ACTIONS (Do not wait for user)
+        # ----------------------------------------------------------
+
+        # A. Visual Update
+        safe_bar = self.get_safe_setpoint_bar()
+        if self.plot_window is not None:
+            self.plot_window.set_setpoint_value(safe_bar)
+        self.win.setpoint.blockSignals(True)
+        self.win.setpoint.setValue(safe_bar)
+        self.win.setpoint.blockSignals(False)
+
+        # B. Reset Alarm Bit
+        self.reset_alarm_cmd()
+
+        # C. Sync Hardware Setpoint (Hold Safe Pressure)
+        if self.capacity > 0:
+            safe_propar = self.bar_to_propar(safe_bar, self.capacity)
+            try:
+                self.instrument.writeParameter(9, safe_propar)
+                print(f"System Holding at Safe State: {safe_bar} bar")
+            except Exception as e:
+                print(f"Warning: Hardware sync failed: {e}")
+
+        # D. Schedule Shutdown
+        shut_delay = self.config['Safety'].getfloat('purge_shut_delay', 1.0)
+        print(f"Auto-Shutdown scheduled in {shut_delay} seconds...")
+
+        # The timer runs in the background event loop.
+        # It will fire even if the popup below is still open.
+        QTimer.singleShot(int(shut_delay * 1000), self._finalize_purge)
+
+        # E. Update Cooldown Tracker
+        self.last_reset_time = time.time()
+
+        # ----------------------------------------------------------
+        # STEP 2: NOTIFY USER
+        # ----------------------------------------------------------
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Critical)
+        msg.setWindowTitle("SAFETY SHUTDOWN")
+        msg.setText("<b>Pressure Deviation Above Setpoint Detected</b>")
+        msg.setInformativeText(
+            f"The system has initiated an automatic safety shutdown.\n\n"
+            f"1. Purging at {safe_bar} bar for {shut_delay} seconds.\n"
+            f"2. Valve will close automatically.\n\n"
+            f"Try to reduce PID regulation speed.\n\n"
+            f"Diagnostic Code: {alarm_code}"
+        )
+        msg.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+
+        # This blocks the User Interface (mouse clicks) so they must acknowledge,
+        # BUT the QTimer for shutdown continues running in the background.
+        msg.exec()
+
+        self.alarm_popup_active = False
+
+    def get_safe_setpoint_bar(self):
+        """
+        Single source of truth for the safe state pressure.
+        Returns float (bar).
+        """
+        try:
+            # Reads from config [Safety] -> set_point_safe_state
+            return self.config['Safety'].getfloat('set_point_safe_state', 0.0)
+        except Exception as e:
+            print(f"Error reading safe setpoint config: {e}. Defaulting to 0.0.")
+            return 0.0
 
     def update_device_status(self, status: str):
         """Updates the device status label and enables/disables controls."""
@@ -762,7 +883,58 @@ class Bronkhost(QMainWindow):
         except Exception as e:
             print(f"Error reading device info: {e}")
 
+    def configure_response_alarm(self):
+        """
+        Configures the Deviation Alarm.
+        TOLERANCE is now defined in BARS.
+        """
+        if self.is_offline:
+            return
 
+        try:
+            print("--- Configuring Response Alarm (Tolerance in Bars) ---")
+
+            # 1. Read the Enable Flag
+            enable_flag = self.config['Safety'].getboolean('set_point_above_safety_enable', True)
+            self.response_alarm_enabled = enable_flag
+
+            # 2. Read Configuration Values
+            # NOW READ AS BARS (e.g., 5.0 means 5 bar)
+            tol_bar = self.config['Safety'].getfloat('set_point_above_tolerance', 2.0)
+
+            delay_sec = self.config['Safety'].getint('set_point_above_delay', 2)
+            safe_pressure_bar = self.config['Safety'].getfloat('set_point_safe_state', 0.0)
+
+            # 3. Calculate Device Integers (0-32000)
+
+            # --- CRITICAL CHANGE: Convert Tolerance Bar to Integer ---
+            # This scales the bar value against the device capacity.
+            # Example: 5 bar on 100 bar device -> (5/100)*32000 = 1600
+            dev_above_int = self.bar_to_propar(tol_bar, self.capacity)
+            # -------------------------------------------------------
+
+            # Deviation Below (Min Limit) - Set to max to ignore
+            dev_below_int = 32000
+
+            # Safe Setpoint Integer
+            safe_setpoint_int = self.bar_to_propar(safe_pressure_bar, self.capacity)
+
+            print(f"Config: Enable={self.response_alarm_enabled}")
+            print(f"Tolerance: {tol_bar} bar (Int: {dev_above_int})")
+            print(f"Safe State: {safe_pressure_bar} bar (Int: {safe_setpoint_int})")
+
+            # 4. Send Configuration
+            self.instrument.writeParameter(118, 0)  # Disable temporarily
+            self.instrument.writeParameter(116, dev_above_int)
+            self.instrument.writeParameter(117, dev_below_int)
+            self.instrument.writeParameter(121, safe_setpoint_int)
+            self.instrument.writeParameter(120, 1)  # Enable Setpoint Change
+            self.instrument.writeParameter(182, delay_sec)
+
+            # Mode 2 is enabled dynamically in valve_PID()
+
+        except Exception as e:
+            print(f"Error configuring alarms: {e}")
 
     def read_initial_setpoint(self):
         raw_setpoint = self.instrument.readParameter(9)
@@ -803,26 +975,55 @@ class Bronkhost(QMainWindow):
 
     def purge_system(self):
         """
-        Sets the setpoint to 0.0 and switches the device to PID mode
-        to evacuate pressure.
+        Purge Sequence:
+        1. Set Setpoint to configured purge pressure.
+        2. Switch to PID mode.
+        3. Wait (non-blocking) for configured delay.
+        4. Switch to Shut/Closed mode.
         """
         if self.is_offline or not self.connection_successful:
             print("Purge skipped: Device is offline.")
             return
 
-        print("--- Purge Sequence Initiated ---")
+        # 1. Read Config
+        try:
+            purge_sp = self.config['Safety'].getfloat('purge_set_point', 0.0)
+            delay_sec = self.config['Safety'].getfloat('purge_shut_delay', 1.0)
+        except ValueError:
+            print("Config Error: Invalid purge settings. Using defaults (0.0 bar, 1s).")
+            purge_sp = 0.0
+            delay_sec = 1.0
 
-        # 1. Update the UI Spinbox to 0.0
-        self.win.setpoint.setValue(0.0)
+        print(f"--- Purge Sequence Initiated: Target={purge_sp} bar, Wait={delay_sec}s ---")
 
-        # 2. Send the 0.0 setpoint to the device immediately
-        # We call self.setPoint() manually to ensure the command (Param 9) is sent
+        # 2. Update UI and Send Setpoint
+        # The spinbox automatically clamps the value if it exceeds device max
+        self.win.setpoint.setValue(purge_sp)
+
+        # Explicitly call setPoint to send Param 9 to the device
         self.setPoint()
 
-        # 3. Force mode to PID (Param 12 = 0)
-        # We call valve_PID() to handle the device command AND update the UI
-        # (radio buttons, status labels, colors)
+        # 3. Activate PID Mode
         self.valve_PID()
+
+        # 4. Schedule the Shutdown (Non-blocking)
+        # We use QTimer.singleShot to trigger the close function after X milliseconds.
+        # This keeps the GUI responsive (plotting continues) during the wait.
+        print(f"Purging is active. Closing in {delay_sec} seconds...")
+        QTimer.singleShot(int(delay_sec * 1000), self._finalize_purge)
+
+    def _finalize_purge(self):
+        """
+        Callback function triggered by the QTimer after the purge delay.
+        Closes the valve and updates the UI.
+        """
+        print("Purge: Delay finished. Closing valves.")
+
+        # Close the valve
+        self.valve_close()
+
+        # Ensure the UI Radio Button reflects the change
+        self.win.radioShut.setChecked(True)
 
     def valve_PID(self):
         print('Valve PID controlled')
@@ -846,8 +1047,18 @@ class Bronkhost(QMainWindow):
         self.instrument.writeParameter(12, 0)  # 'PID Control' command
         self.valve_status = "PID"
 
+        # --- Enable Alarm if Configured ---
+        if self.response_alarm_enabled:
+            try:
+                # [cite_start]Mode 2: Alarm on limits related to setpoint [cite: 1172]
+                self.instrument.writeParameter(118, 2)
+                print("Safety alarm: ENABLED (Mode 2)")
+            except Exception as e:
+                print(f"Failed to enable alarm: {e}")
+        # ---------------------------------------
+
         # 3. Attempt to read the new valve value
-        time.sleep(0.2)
+        time.sleep(0.1)
         try:
             valve1_output = self.instrument.readParameter(55)
 
@@ -874,8 +1085,16 @@ class Bronkhost(QMainWindow):
         self.flicker_timer.start(500)  # 500 ms interval
         self.instrument.writeParameter(12, 3)  # 'Valve Closed' command
         self.valve_status = "closed"
-        #if hasattr(self.win, 'absolute_measure'):
-        #    self.win.absolute_measure.setText("0.00")
+
+        # --- Disable Alarm ---
+        try:
+            # [cite_start]Mode 0: Off [cite: 1172]
+            self.instrument.writeParameter(118, 0)
+            print("Safety Alarm: DISABLED (Mode 0)")
+        except Exception as e:
+            print(f"Failed to disable alarm: {e}")
+        # --------------------------
+
         if hasattr(self.win, 'inlet_valve_label'):
             self.win.inlet_valve_label.setStyleSheet("color: gray;")
             self.win.inlet_valve_label.setText("...")
@@ -1009,6 +1228,7 @@ class THREADFlow(QtCore.QThread):
     VALVE1_MEAS = QtCore.pyqtSignal(float)
     DEBUG_MEAS = QtCore.pyqtSignal(float)
     DEVICE_STATUS_UPDATE = QtCore.pyqtSignal(str)
+    CRITICAL_ALARM = QtCore.pyqtSignal(int)
 
     def __init__(self, parent, capacity, thread_sleep_time):
         super(THREADFlow, self).__init__(parent)
@@ -1020,6 +1240,7 @@ class THREADFlow(QtCore.QThread):
         self.thread_sleep_time = float(thread_sleep_time)
 
     def run(self):
+        last_alarm_status = 0  # Track changes
         while not self.stop:
             # 1. Mark the start time of this cycle
             loop_start_time = time.time()
@@ -1041,6 +1262,11 @@ class THREADFlow(QtCore.QThread):
 
                 # --- Status Logic ---
                 if alarm_status is not None:
+                    # DEBUG: Print only if status changes or is critical
+                    if alarm_status != last_alarm_status:
+                        print(f" [ALARM CHANGE] Status Code: {alarm_status} (Binary: {bin(alarm_status)})")
+                        last_alarm_status = alarm_status
+
                     if alarm_status & 1:
                         self.DEVICE_STATUS_UPDATE.emit('Error')
                     elif alarm_status & 2:
@@ -1048,6 +1274,8 @@ class THREADFlow(QtCore.QThread):
                     else:
                         self.DEVICE_STATUS_UPDATE.emit('Normal')
 
+                    if (alarm_status & 32) or (alarm_status & 8):
+                        self.CRITICAL_ALARM.emit(alarm_status)
                 # --- Emission Logic (Pressure) ---
                 # We use the current time as the timestamp for the graph
                 timestamp = time.time()

@@ -28,15 +28,21 @@ class HelpWindow(QDialog):
         </p>
         
         <h4>General Behaviour</h4>
-        <ul>
-            <li>Upon startup, the program prioritizes safety by immediately <b>sending a command to close the inlet valve</b> and then queries the device to <b>read and display the last known setpoint</b>.</li>
-            <li>The setpoint value can be modified even while the valve is closed, allowing the user to prepare the next setting in advance.</li>
-            <li>To ensure a safe state upon exit, the application again sends a command to <b>close the valve</b> before terminating the connection.</li>
-            <li>Configuration Initialization: On launch, the system parses config.ini using the configparser library. 
-            It loads critical runtime parameters such as the thread polling interval (program refresh rate), 
-            circular buffer size (plot history), plot styling (line colors), and the maximum pressure safety limit. 
-            It also validates the data types (converting floats/integers) to prevent runtime errors.</li>
-        </ul>
+            <ul>
+                <li><b>Startup Safety:</b> Upon startup, the program prioritizes safety by immediately <b>sending a command to close both the inlet and relief valves</b>. It then queries the device to <b>read and display the last known setpoint</b>.</li>
+                <li><b>Setpoint Pre-configuration:</b> The setpoint value can be modified even while  valves are closed, allowing the user to prepare the next setting in advance.</li>
+                <li><b>Exit Safety:</b> To ensure a safe state upon exit, the application sends a final command to <b>close valves</b> before terminating the connection.</li>
+                <li><b>Configuration Initialization:</b> On launch, the system parses <code>config.ini</code> to load critical runtime parameters such as the thread polling interval, plot history size, and maximum pressure limits. 
+                <br><i>(Please refer to the <b>Configuration Guide</b> at the bottom of this text for a detailed description of all settings.)</i></li>
+            </ul>
+            
+            <h4>Deviation Safety Protocol</h4>
+            <ul>
+                <li><b>Active Monitoring:</b> When PID control is active, the system enables a hardware-level alarm (Response Alarm Mode 2) to monitor pressure deviation against the <b>tolerance limit</b> defined in the config.</li>
+                <li><b>Immediate Reaction:</b> If the measured pressure exceeds the threshold (Setpoint + Tolerance) for the configured delay time, the device <b>automatically forces the setpoint to the "Safe State"</b> to relieve system pressure immediately.</li>
+                <li><b>Auto-Shutdown Sequence:</b> Simultaneously, the software triggers an automatic safety timer. It holds the system at the Safe State for the duration of the <i>purge_shut_delay</i>, and then <b>automatically closes valves</b> to fully secure the system.</li>
+                <li><b>Operator Alert:</b> A diagnostic popup is displayed to notify the user that an automatic safety shutdown has occurred.</li>
+            </ul>
         
         <h4>User Tag</h4>
         <ul>
@@ -85,10 +91,10 @@ class HelpWindow(QDialog):
         <ul>
         <li><b>P Set (bar):</b> Set the desired pressure in bar. The value is sent when user presses Enter or when the input box loses focus. 
         The maximum value is limited by the device capacity (physical limit) or the user-defined safety preset "max_set_pressure" in the config.ini file.</li>
-        <li><b>Purge Button:</b> Activates the purge sequence: sets the pressure setpoint to 0.0 bar and switches the device 
-        to PID mode, regardless of the current mode.</li>
+        <li><b>Purge Button:</b> Activates the purge sequence: Sets the setpoint to the <b>configured purge pressure</b> and switches the device to <b>PID mode</b>. 
+        It maintains this state for the configured duration before <b>automatically closing the valve</b>.</li>
         <li><b>Valve Mode Radio Buttons:</b> The <b>PID</b> button enables automatic control, while the <b>Shut</b> button 
-        fully closes both the input and output valves.</li>
+        fully closes both the input and relief valves.</li>
         <li><b>Advanced Button:</b> Opens a password-protected panel for advanced settings. The password can be modified in the config.ini file.</li>
         </ul>
         
@@ -107,6 +113,62 @@ class HelpWindow(QDialog):
           <li><b>Hyster: </b> (Controller Hysteresis) Defines a pressure band around the setpoint where both control valves remain closed. The value (0 to 1.0) corresponds to 0% to 100% of the setpoint range. The default is <b>0.001 (0.1%)</b>.</li>
           <li><b>UserTag: </b> User definable alias string. Maximum 16 characters allow the user to give the instrument his own tag name.</li>
         </ul>
+        <hr>
+        <h2>Configuration Guide (config.ini)</h2>
+        <p>The application behavior is controlled by the <b>config.ini</b> file located in the program folder. Below is a reference for the available settings.</p>
+        
+        
+        
+        <h3>[Safety]</h3>
+        <p>Critical settings for device limits and automatic safety protocols.</p>
+        <ul>
+            <li><span class="param">max_set_pressure:</span> The absolute maximum pressure (bar) the user can enter in the UI. If this exceeds the physical device limit, the device limit is used.</li>
+            <li><span class="param">purge_set_point:</span> The target pressure (bar) applied during a manual Purge or Safety Shutdown sequence.</li>
+            <li><span class="param">purge_shut_delay:</span> Time (seconds) the system holds the purge pressure before closing valves completely.</li>
+            <br>
+            <li><span class="param">set_point_above_safety_enable:</span> Master switch for the Deviation Alarm (1 = On, 0 = Off).</li>
+            <li><span class="param">set_point_above_tolerance:</span> The allowed deviation (in bar) above the current setpoint. If <i>Measure > Setpoint + Upper Tolerance</i>, the alarm triggers. Tolerance below the setpoint is ignored.</li>
+            <li><span class="param">set_point_above_delay:</span> Duration (seconds) the high pressure must persist before the safety shutdown is triggered.</li>
+            <li><span class="param">set_point_safe_state:</span> The safe low pressure setpoint used during an alarm. Usually linked to <i>purge_set_point</i>.</li>
+        </ul>
+        
+        
+        
+        <h3>[Connection]</h3>
+        <ul>
+            <li><span class="param">default_com_port:</span> The COM port selected by default in the connection dialog (e.g., COM6).</li>
+        </ul>
+        
+        
+        
+        <h3>[Thread]</h3>
+        <ul>
+            <li><span class="param">thread_sleep_time:</span> The interval (seconds) between measurement updates. <span class="note">(Min recommended: 0.05s)</span>.</li>
+        </ul>
+        
+        
+        
+        <h3>[Plotting]</h3>
+        <ul>
+            <li><span class="param">max_history:</span> The maximum number of data points kept in memory buffer.</li>
+            <li><span class="param">default_duration:</span> The default time range (seconds) visible on the X-axis when the app starts.</li>
+            <li><span class="param">pressure_color / setpoint_color:</span> Hex codes for the plot lines (e.g., #FFFF00).</li>
+        </ul>
+        
+        
+        
+        <h3>[Security]</h3>
+        <ul>
+            <li><span class="param">admin_password:</span> Password required to access the Admin Panel.</li>
+        </ul>
+        
+        
+        
+        <h3>[UI]</h3>
+        <ul>
+            <li><span class="param">window_title:</span> The text displayed in the main application window title bar.</li>
+        </ul>
+        
         """
         version_info = f"""
                <hr>

@@ -28,15 +28,17 @@
   </property>
   <property name="styleSheet">
    <string notr="true">QGroupBox {
-	color: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 10);
-    margin-top: 8px;
+	color: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 25);
+    margin-top: 5px;
 }
 
 QGroupBox::title {
+	color: rgba(255, 255, 255, 0.4);
     subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 5px;
+	subcontrol-position: top left;
+	top: -3px;
+    padding: 0 8px;
 }</string>
   </property>
   <widget class="QWidget" name="centralwidget">
@@ -177,7 +179,7 @@ QGroupBox::title {
          </font>
         </property>
         <property name="styleSheet">
-         <string notr="true">QGroupBox::title {color: rgba(156, 162, 149, 1.0); }</string>
+         <string notr="true"/>
         </property>
         <property name="title">
          <string>User Tag</string>
@@ -225,7 +227,7 @@ QGroupBox::title {
          </font>
         </property>
         <property name="styleSheet">
-         <string notr="true">QGroupBox::title {color: rgba(156, 162, 149, 1.0); }</string>
+         <string notr="true"/>
         </property>
         <property name="title">
          <string>Monitors</string>
@@ -536,7 +538,7 @@ QGroupBox::title {
          </font>
         </property>
         <property name="styleSheet">
-         <string notr="true">QGroupBox::title {color: rgba(156, 162, 149, 1.0); }</string>
+         <string notr="true"/>
         </property>
         <property name="title">
          <string>Time Plot</string>
@@ -645,7 +647,7 @@ QGroupBox::title {
          </font>
         </property>
         <property name="styleSheet">
-         <string notr="true">QGroupBox::title {color: rgba(156, 162, 149, 1.0); }</string>
+         <string notr="true"/>
         </property>
         <property name="title">
          <string>Controls</string>
@@ -923,7 +925,7 @@ QGroupBox::title {
          </font>
         </property>
         <property name="styleSheet">
-         <string notr="true">QGroupBox::title {color: rgba(156, 162, 149, 1.0); }</string>
+         <string notr="true"/>
         </property>
         <property name="title">
          <string>Log Display</string>
