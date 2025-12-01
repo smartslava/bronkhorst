@@ -1060,7 +1060,8 @@ class Bronkhost(QMainWindow):
         self.setPoint()
 
         # 3. Activate PID Mode
-        self.valve_PID()
+        self.valve_PID(force_cooldown=True)
+        #self.valve_PID()
 
         # 4. Schedule the Shutdown (Non-blocking)
         # We use QTimer.singleShot to trigger the close function after X milliseconds.
@@ -1121,7 +1122,7 @@ class Bronkhost(QMainWindow):
         # 2. Always update the tracker
         self.last_known_setpoint = new_bar_setpoint
 
-    def valve_PID(self):
+    def valve_PID(self,force_cooldown=False):
         print('Valve PID controlled')
 
         # 1. Update UI Visuals
@@ -1145,12 +1146,17 @@ class Bronkhost(QMainWindow):
 
         # --- Enable Alarm if Configured ---
         if self.response_alarm_enabled:
-            try:
-                # [cite_start]Mode 2: Alarm on limits related to setpoint [cite: 1172]
-                self.instrument.writeParameter(118, 2)
-                print("Safety alarm: ENABLED (Mode 2)")
-            except Exception as e:
-                print(f"Failed to enable alarm: {e}")
+            # Check if we lowered setpoint OR if cooldown is forced (e.g. by Purge)
+            if self.was_last_change_decrease or force_cooldown:
+                print("Entering PID (Setpoint drop or Purge): Triggering Cooldown.")
+                self._trigger_alarm_cooldown()
+            else:
+                # Standard behavior: Enable alarm immediately
+                try:
+                    self.instrument.writeParameter(118, 2)
+                    print("Safety alarm: ENABLED (Mode 2) - Immediate")
+                except Exception as e:
+                    print(f"Failed to enable alarm: {e}")
         # ---------------------------------------
 
         # 3. Attempt to read the new valve value
