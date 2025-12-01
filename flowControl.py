@@ -6,7 +6,7 @@ import qtpy
 Created on Wed Jun 21 15:26:36 2023
 @author: SALLEJAUNE & Slava Smartsev
 """
-__version__ = "1.2.0-beta"
+__version__ = "1.2.1-beta"
 import pathlib, os
 os.environ['QT_API'] = 'pyqt6'
 from admin_window import AdminWindow
@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QMainWindow, QInputDialog, Q
 
 import datetime as dt
 import pyqtgraph as pg
-
 from PyQt6.QtGui import QIcon
 import sys
 import time
@@ -32,8 +31,8 @@ import configparser
 
 def load_configuration():
     config = configparser.ConfigParser()
-    # Determine the folder where THIS python file is located
-    script_dir = os.path.dirname(os.path.abspath('config.ini'))
+    # This gets the directory of the current python script file
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(script_dir, 'config.ini')
 
     # Default values in case file is missing
@@ -43,10 +42,8 @@ def load_configuration():
             'max_set_pressure': '100.0',
             'set_point_above_tolerance': '1',
             'set_point_above_delay': '2',
-            'set_point_safe_state': '0.0',
             'set_point_above_safety_enable': '1',
-            'purge_set_point': '0.0',
-            'purge_shut_delay': '1'
+            'purge_shut_delay': '2'
             # ----------------------
         },
         'Thread': {'thread_sleep_time': '0.2'},
@@ -74,7 +71,7 @@ def load_configuration():
 
 
 # Load config globally or pass it down
-APP_CONFIG = load_configuration()
+#APP_CONFIG = load_configuration()
 
 
 
@@ -190,25 +187,31 @@ class PlotWindow(QMainWindow):
     # ... (other code)
 
     def __init__(self, parent=None, max_history=24000, default_duration=10.0,
-                 p_color='#FFFF00', s_color='#FF0000'):
+                 p_color='#FFFF00', s_color='#FF0000',user_tag=""):
         # 1. Initialize the QMainWindow superclass
         super(PlotWindow, self).__init__(parent)
+        self.resize(400, 300)  # Width, Height in pixels
         self.max_duration = float(default_duration)
         self.setWindowTitle('Real-Time Pressure Plot')
 
         self.graphWidget = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
         self.setCentralWidget(self.graphWidget)
 
+        self.graphWidget.getViewBox().enableAutoRange(axis='y', enable=True)
+        self.graphWidget.getViewBox().setAutoVisible(y=True)
+
         # 3. Styling the plot
         self.graphWidget.setBackground('k')
-        self.graphWidget.setTitle("Pressure Reading (bar)", color="w", size="15pt")
-        styles = {'color': 'w', 'font-size': '12pt'}
+        self.update_title(user_tag)
+        gray_color = '#C0C0C0'
+        styles = {'color': gray_color, 'font-size': '10pt'}
         self.graphWidget.setLabel('left', 'Pressure (bar)', **styles)
         # *** FIX: Update the label from 'Time (s)' to 'Time (HH:MM:SS)' ***
-        self.graphWidget.setLabel('bottom', 'Time (HH:MM:SS)', **styles)
-        self.graphWidget.showGrid(x=True, y=True)
-        self.graphWidget.getAxis('bottom').setPen('w')
-        self.graphWidget.getAxis('left').setPen('w')
+        self.graphWidget.setLabel('bottom', 'Local Time', **styles)
+
+        self.graphWidget.showGrid(x=True, y=True, alpha=0.2)
+        self.graphWidget.getAxis('bottom').setPen(gray_color)
+        self.graphWidget.getAxis('left').setPen(gray_color)
 
         # 4. Initialize Data Storage (MAX_HISTORY_POINTS needs to be defined near the class)
         #MAX_HISTORY_POINTS = 24000 #around 1 hour
@@ -258,6 +261,15 @@ class PlotWindow(QMainWindow):
                     strings.append('')
             return strings
 
+    def update_title(self, user_tag=""):
+        """Updates the plot title to include the User Tag if available."""
+        base_title = "Pressure Reading and Setpoint"
+        if user_tag and user_tag != "—":
+            full_title = f"{base_title} - {user_tag}"
+        else:
+            full_title = base_title
+
+        self.graphWidget.setTitle(full_title, color="#C0C0C0", size="12pt")
     def set_max_duration(self, duration_s: float):
         """Sets the new maximum duration (in seconds) for the plot's X-axis."""
         if duration_s > 0:
@@ -355,6 +367,14 @@ class Bronkhost(QMainWindow):
         self.flicker_timer.timeout.connect(self._toggle_status_label_visibility)
         self.label_is_visible = True  # State tracker for the flicker
 
+        # --- Alarm Cooldown Timer ---
+        self.rearm_timer = QTimer(self)
+        self.rearm_timer.setSingleShot(True)
+        self.rearm_timer.timeout.connect(self._reenable_alarm)
+        self.last_known_setpoint = 0.0  # Track previous setpoint
+        self.lower_setpoint_cooldown = 2.0  # Default value, updated later from config
+        self.was_last_change_decrease = False
+
         # --- REDIRECT PRINT STATEMENTS ---
         self.log_stream = Stream()
         self.log_stream.new_text.connect(self.update_log)
@@ -440,8 +460,8 @@ class Bronkhost(QMainWindow):
         startup_duration = min(config_duration, max_possible_seconds)
 
         #self.plot_window = PlotWindow(self, max_history=hist, default_duration=startup_duration)
-        col_pressure = self.config['Plotting'].get('pressure_color', '#FFFF00')
-        col_setpoint = self.config['Plotting'].get('setpoint_color', '#FF0000')
+        col_pressure = self.config['Plotting'].get('pressure_color', '#FFFF00').strip('"\'')
+        col_setpoint = self.config['Plotting'].get('setpoint_color', '#FF0000').strip('"\'')
 
         # 2. Initialize PlotWindow with ALL arguments
         # We pass max_history, default_duration, AND the two colors
@@ -564,7 +584,7 @@ class Bronkhost(QMainWindow):
         msg.setInformativeText(
             f"The system has initiated an automatic safety shutdown.\n\n"
             f"1. Purging at {safe_bar} bar for {shut_delay} seconds.\n"
-            f"2. Valve will close automatically.\n\n"
+            f"2. Closing valve automatically.\n\n"
             f"Try to reduce PID regulation speed.\n\n"
             f"Diagnostic Code: {alarm_code}"
         )
@@ -579,14 +599,9 @@ class Bronkhost(QMainWindow):
     def get_safe_setpoint_bar(self):
         """
         Single source of truth for the safe state pressure.
-        Returns float (bar).
+        Now hardcoded to 0.0 bar.
         """
-        try:
-            # Reads from config [Safety] -> set_point_safe_state
-            return self.config['Safety'].getfloat('set_point_safe_state', 0.0)
-        except Exception as e:
-            print(f"Error reading safe setpoint config: {e}. Defaulting to 0.0.")
-            return 0.0
+        return 0.0
 
     def update_device_status(self, status: str):
         """Updates the device status label and enables/disables controls."""
@@ -654,6 +669,7 @@ class Bronkhost(QMainWindow):
                     self._resync_setpoint()
 
                 self.read_device_info()
+                self.configure_response_alarm()
 
                 try:
                     valve1_output = self.instrument.readParameter(55)
@@ -879,7 +895,21 @@ class Bronkhost(QMainWindow):
                 else:
                     user_tag = str(user_tag_raw)
                 self.update_user_tag_label(user_tag)
+            if user_tag_raw is not None:
+                if isinstance(user_tag_raw, (bytes, bytearray)):
+                    try:
+                        user_tag = user_tag_raw.decode('utf-8', errors='ignore')
+                    except Exception:
+                        user_tag = str(user_tag_raw)
+                else:
+                    user_tag = str(user_tag_raw)
 
+                # 1. Update the Main Window Label (Existing code)
+                self.update_user_tag_label(user_tag)
+
+                # 2. NEW: Update the Plot Window Title
+                if self.plot_window is not None:
+                    self.plot_window.update_title(user_tag)
         except Exception as e:
             print(f"Error reading device info: {e}")
 
@@ -891,23 +921,38 @@ class Bronkhost(QMainWindow):
         if self.is_offline:
             return
 
+        # --- 1. PAUSE THE THREAD (Thread Safety) ---
+        # We stop the reading thread so it doesn't try to use the COM port
+        # while we are writing complex configuration data.
+        thread_was_running = False
+        if hasattr(self, 'threadFlow') and self.threadFlow.isRunning():
+            print("Pausing measurement thread for config...")
+            self.threadFlow.stop = True
+            thread_was_running = True
+            # Wait up to 1000ms for the thread to actually finish
+            self.threadFlow.wait(1000)
+
+
         try:
-            print("--- Configuring Response Alarm (Tolerance in Bars) ---")
+            print("--- Loading Config of Response Alarm ---")
 
             # 1. Read the Enable Flag
             enable_flag = self.config['Safety'].getboolean('set_point_above_safety_enable', True)
             self.response_alarm_enabled = enable_flag
-
+            safe_pressure_bar = self.get_safe_setpoint_bar()
             # 2. Read Configuration Values
-            # NOW READ AS BARS (e.g., 5.0 means 5 bar)
             tol_bar = self.config['Safety'].getfloat('set_point_above_tolerance', 2.0)
-
+            print(f"Pressure tolerance: {tol_bar} bars")
             delay_sec = self.config['Safety'].getint('set_point_above_delay', 2)
-            safe_pressure_bar = self.config['Safety'].getfloat('set_point_safe_state', 0.0)
+            print(f"Alarm activation delay: {delay_sec} s")
+            # --- Read Cooldown Delay  ---
+            self.lower_setpoint_cooldown = self.config['Safety'].getfloat('set_point_lower_cooldown_delay', 2.0)
+            print(f"Lower Setpoint Cooldown: {self.lower_setpoint_cooldown} s")
+            print("------")
 
             # 3. Calculate Device Integers (0-32000)
 
-            # --- CRITICAL CHANGE: Convert Tolerance Bar to Integer ---
+            # --- Convert Tolerance Bar to Integer ---
             # This scales the bar value against the device capacity.
             # Example: 5 bar on 100 bar device -> (5/100)*32000 = 1600
             dev_above_int = self.bar_to_propar(tol_bar, self.capacity)
@@ -919,7 +964,7 @@ class Bronkhost(QMainWindow):
             # Safe Setpoint Integer
             safe_setpoint_int = self.bar_to_propar(safe_pressure_bar, self.capacity)
 
-            print(f"Config: Enable={self.response_alarm_enabled}")
+            print(f"Response Alarm Enable = {self.response_alarm_enabled}")
             print(f"Tolerance: {tol_bar} bar (Int: {dev_above_int})")
             print(f"Safe State: {safe_pressure_bar} bar (Int: {safe_setpoint_int})")
 
@@ -935,11 +980,18 @@ class Bronkhost(QMainWindow):
 
         except Exception as e:
             print(f"Error configuring alarms: {e}")
+        finally:
+            # ---  RESTART THE THREAD ---
+            # We only restart it if it was running before we paused it.
+            if thread_was_running and hasattr(self, 'threadFlow'):
+                print("Resuming measurement thread...")
+                self.threadFlow.stop = False  # Reset the flag so the loop runs
+                self.threadFlow.start()  # Restart the QThread
 
     def read_initial_setpoint(self):
         raw_setpoint = self.instrument.readParameter(9)
-        #abs_setpoint = (float(raw_setpoint) / 32000.0) * 100.0
         bar_setpoint = self.propar_to_bar(raw_setpoint, self.capacity)
+        self.last_known_setpoint = bar_setpoint
         self.win.setpoint.blockSignals(True)
         self.win.setpoint.setValue(bar_setpoint)
         self.win.setpoint.blockSignals(False)
@@ -949,21 +1001,24 @@ class Bronkhost(QMainWindow):
 
     def show_plot_window(self):
         """
-        Shows the plot window. If already open, brings it to the front
-        and restores it if minimized.
+        Shows the plot window and positions it to the top-right
+        of the main window (similar to the Help window).
         """
         if self.plot_window is None:
             return
 
-        # 1. Un-minimize and make visible
-        # showNormal() is better than show() here because if the user
-        # minimized the window to the taskbar, this forces it back open.
+        # 1. Un-minimize and make visible first
         self.plot_window.showNormal()
 
-        # 2. Bring the window to the top of the application's window stack
-        self.plot_window.raise_()
+        # 2. Calculate Position (Top-Right of Main Window)
+        main_geo = self.geometry()
+        top_right_point = main_geo.topRight()
 
-        # 3. Tell the Operating System to give this window focus (keyboard/mouse)
+        # 3. Move the plot window to that coordinate
+        self.plot_window.move(top_right_point)
+
+        # 4. Bring window to front and give focus
+        self.plot_window.raise_()
         self.plot_window.activateWindow()
 
     def on_mode_changed(self, button):
@@ -987,7 +1042,8 @@ class Bronkhost(QMainWindow):
 
         # 1. Read Config
         try:
-            purge_sp = self.config['Safety'].getfloat('purge_set_point', 0.0)
+            #purge_sp = self.config['Safety'].getfloat('purge_set_point', 0.0)
+            purge_sp = 0.0  # Static definition (hardcoded)
             delay_sec = self.config['Safety'].getfloat('purge_shut_delay', 1.0)
         except ValueError:
             print("Config Error: Invalid purge settings. Using defaults (0.0 bar, 1s).")
@@ -1024,6 +1080,46 @@ class Bronkhost(QMainWindow):
 
         # Ensure the UI Radio Button reflects the change
         self.win.radioShut.setChecked(True)
+
+    def _trigger_alarm_cooldown(self):
+        """
+        Disables the alarm temporarily and starts the re-arm timer.
+        Used when lowering setpoint OR when switching to PID mode.
+        """
+        if self.response_alarm_enabled:
+            try:
+                print(f"Safety Wait Period: Disabling alarm for {self.lower_setpoint_cooldown}s...")
+
+                # 1. Disable Alarm (Mode 0) immediately
+                self.instrument.writeParameter(118, 0)
+
+                # 2. Start/Restart the timer (converts seconds to ms)
+                # When this timer finishes, it calls _reenable_alarm automatically
+                self.rearm_timer.start(int(self.lower_setpoint_cooldown * 1000))
+
+            except Exception as e:
+                print(f"Error triggering alarm cooldown: {e}")
+
+    def _handle_setpoint_safety_logic(self, new_bar_setpoint):
+        """
+        Checks if the setpoint is being lowered and updates the direction flag.
+        """
+        # 1. Determine direction (Always track this, even if alarms are off)
+        if new_bar_setpoint < self.last_known_setpoint:
+            self.was_last_change_decrease = True
+            print(f"Setpoint lowered (Old:{self.last_known_setpoint} -> New:{new_bar_setpoint})")
+
+            # If we are ALREADY in PID, try to trigger cooldown
+            if self.valve_status == "PID":
+                # This function checks 'if self.response_alarm_enabled' internally
+                self._trigger_alarm_cooldown()
+
+        elif new_bar_setpoint > self.last_known_setpoint:
+            self.was_last_change_decrease = False
+            # No immediate action needed for increase
+
+        # 2. Always update the tracker
+        self.last_known_setpoint = new_bar_setpoint
 
     def valve_PID(self):
         print('Valve PID controlled')
@@ -1102,12 +1198,15 @@ class Bronkhost(QMainWindow):
             self.win.label_In_Out.setStyleSheet("color: gray;")
 
     def setPoint(self):
-        # *** FIX 2: Guard against running while offline ***
+        # *** Guard against running while offline ***
         if self.is_offline or not self.connection_successful:
             print("Set point skipped: Device is offline.")
             return
 
         bar_setpoint = self.win.setpoint.value()
+
+        self._handle_setpoint_safety_logic(bar_setpoint)
+
         print(f"Bar setpoint set to: {bar_setpoint} {self.unit}")
         self.plot_window.set_setpoint_value(bar_setpoint)
 
@@ -1122,7 +1221,14 @@ class Bronkhost(QMainWindow):
         else:
             print("Warning: Cannot set point, device capacity is unknown or zero.")
 
-
+    def _reenable_alarm(self):
+        """Re-enables the alarm if PID mode is still active."""
+        if self.valve_status == "PID" and self.response_alarm_enabled:
+            try:
+                print("Cooldown finished: Re-enabling Safety Alarm (Mode 2)")
+                self.instrument.writeParameter(118, 2)
+            except Exception as e:
+                print(f"Failed to re-enable alarm: {e}")
 
     def update_inlet_valve_display(self, raw_value):
         if self.valve_status != "closed":
@@ -1320,7 +1426,6 @@ if __name__ == '__main__':
     #appli.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
 
     main_window = None
-    # Load config
     APP_CONFIG = load_configuration()
     default_port = APP_CONFIG['Connection'].get('default_com_port', '')
 
