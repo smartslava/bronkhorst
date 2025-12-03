@@ -14,6 +14,7 @@ from help_window import HelpWindow
 import propar
 from PyQt6 import QtCore, uic
 from PyQt6.QtWidgets import (QApplication, QWidget, QMainWindow, QInputDialog, QMessageBox, QLineEdit, QButtonGroup)
+from PyQt6.QtCore import QMutex
 
 import datetime as dt
 import pyqtgraph as pg
@@ -374,6 +375,7 @@ class Bronkhost(QMainWindow):
         self.last_known_setpoint = 0.0  # Track previous setpoint
         self.lower_setpoint_cooldown = 2.0  # Default value, updated later from config
         self.was_last_change_decrease = False
+        self.instrument_mutex = QMutex()
 
         # --- REDIRECT PRINT STATEMENTS ---
         self.log_stream = Stream()
@@ -507,13 +509,18 @@ class Bronkhost(QMainWindow):
         try:
             print("Sending Alarm Reset Command...")
             # Good practice: Send 0 first to clear previous commands
-            self.instrument.writeParameter(114, 0)
-            time.sleep(0.1)
-            # Send 2 to reset the alarm
-            self.instrument.writeParameter(114, 2)
-            time.sleep(0.1)
-            # Send 0 again to finish
-            self.instrument.writeParameter(114, 0)
+            self.instrument_mutex.lock()  # <--- Lock
+            try:
+                self.instrument.writeParameter(114, 0)
+                time.sleep(0.1)
+                # Send 2 to reset the alarm
+                self.instrument.writeParameter(114, 2)
+                time.sleep(0.1)
+                # Send 0 again to finish
+                self.instrument.writeParameter(114, 0)
+            finally:
+                self.instrument_mutex.unlock()  # <--- Unlock
+
             print("Alarm Reset Sent.")
         except Exception as e:
             print(f"Failed to reset alarm: {e}")
@@ -558,7 +565,11 @@ class Bronkhost(QMainWindow):
         if self.capacity > 0:
             safe_propar = self.bar_to_propar(safe_bar, self.capacity)
             try:
-                self.instrument.writeParameter(9, safe_propar)
+                self.instrument_mutex.lock()  # <--- ADD LOCK
+                try:
+                    self.instrument.writeParameter(9, safe_propar)
+                finally:
+                    self.instrument_mutex.unlock()  # <--- RELEASE
                 print(f"System Holding at Safe State: {safe_bar} bar")
             except Exception as e:
                 print(f"Warning: Hardware sync failed: {e}")
@@ -852,9 +863,13 @@ class Bronkhost(QMainWindow):
     def read_device_info(self):
         """Reads the capacity and unit from the instrument to calculate absolute values."""
         try:
-            capacity = self.instrument.readParameter(21)
-            unit = self.instrument.readParameter(129)
-            user_tag_raw = self.instrument.readParameter(115)
+            self.instrument_mutex.lock()  # <--- ADD LOCK
+            try:
+                capacity = self.instrument.readParameter(21)
+                unit = self.instrument.readParameter(129)
+                user_tag_raw = self.instrument.readParameter(115)
+            finally:
+                self.instrument_mutex.unlock()
 
             if capacity is not None:
                 self.capacity = float(capacity)
@@ -920,19 +935,6 @@ class Bronkhost(QMainWindow):
         """
         if self.is_offline:
             return
-
-        # --- 1. PAUSE THE THREAD (Thread Safety) ---
-        # We stop the reading thread so it doesn't try to use the COM port
-        # while we are writing complex configuration data.
-        thread_was_running = False
-        if hasattr(self, 'threadFlow') and self.threadFlow.isRunning():
-            print("Pausing measurement thread for config...")
-            self.threadFlow.stop = True
-            thread_was_running = True
-            # Wait up to 1000ms for the thread to actually finish
-            self.threadFlow.wait(1000)
-
-
         try:
             print("--- Loading Config of Response Alarm ---")
 
@@ -969,24 +971,20 @@ class Bronkhost(QMainWindow):
             print(f"Safe State: {safe_pressure_bar} bar (Int: {safe_setpoint_int})")
 
             # 4. Send Configuration
-            self.instrument.writeParameter(118, 0)  # Disable temporarily
-            self.instrument.writeParameter(116, dev_above_int)
-            self.instrument.writeParameter(117, dev_below_int)
-            self.instrument.writeParameter(121, safe_setpoint_int)
-            self.instrument.writeParameter(120, 1)  # Enable Setpoint Change
-            self.instrument.writeParameter(182, delay_sec)
+            self.instrument_mutex.lock()  # <--- Lock
+            try:
+                self.instrument.writeParameter(118, 0)  # Disable temporarily
+                self.instrument.writeParameter(116, dev_above_int)
+                self.instrument.writeParameter(117, dev_below_int)
+                self.instrument.writeParameter(121, safe_setpoint_int)
+                self.instrument.writeParameter(120, 1)  # Enable Setpoint Change
+                self.instrument.writeParameter(182, delay_sec)
+            finally:
 
-            # Mode 2 is enabled dynamically in valve_PID()
-
+                self.instrument_mutex.unlock()  # <--- Unlock
         except Exception as e:
             print(f"Error configuring alarms: {e}")
-        finally:
-            # ---  RESTART THE THREAD ---
-            # We only restart it if it was running before we paused it.
-            if thread_was_running and hasattr(self, 'threadFlow'):
-                print("Resuming measurement thread...")
-                self.threadFlow.stop = False  # Reset the flag so the loop runs
-                self.threadFlow.start()  # Restart the QThread
+
 
     def read_initial_setpoint(self):
         raw_setpoint = self.instrument.readParameter(9)
@@ -1042,12 +1040,10 @@ class Bronkhost(QMainWindow):
 
         # 1. Read Config
         try:
-            #purge_sp = self.config['Safety'].getfloat('purge_set_point', 0.0)
             purge_sp = 0.0  # Static definition (hardcoded)
             delay_sec = self.config['Safety'].getfloat('purge_shut_delay', 1.0)
         except ValueError:
             print("Config Error: Invalid purge settings. Using defaults (0.0 bar, 1s).")
-            purge_sp = 0.0
             delay_sec = 1.0
 
         print(f"--- Purge Sequence Initiated: Target={purge_sp} bar, Wait={delay_sec}s ---")
@@ -1092,7 +1088,12 @@ class Bronkhost(QMainWindow):
                 print(f"Safety Wait Period: Disabling alarm for {self.lower_setpoint_cooldown}s...")
 
                 # 1. Disable Alarm (Mode 0) immediately
-                self.instrument.writeParameter(118, 0)
+
+                self.instrument_mutex.lock()  # <--- ADD LOCK
+                try:
+                    self.instrument.writeParameter(118, 0)
+                finally:
+                    self.instrument_mutex.unlock()
 
                 # 2. Start/Restart the timer (converts seconds to ms)
                 # When this timer finishes, it calls _reenable_alarm automatically
@@ -1141,8 +1142,12 @@ class Bronkhost(QMainWindow):
             self.win.label_In_Out.setStyleSheet("color: white;")
 
         # 2. Send Command to Device
-        self.instrument.writeParameter(12, 0)  # 'PID Control' command
-        self.valve_status = "PID"
+        self.instrument_mutex.lock()
+        try:
+            self.instrument.writeParameter(12, 0)  # 'PID Control' command
+            self.valve_status = "PID"
+        finally:
+            self.instrument_mutex.unlock()
 
         # --- Enable Alarm if Configured ---
         if self.response_alarm_enabled:
@@ -1153,7 +1158,11 @@ class Bronkhost(QMainWindow):
             else:
                 # Standard behavior: Enable alarm immediately
                 try:
-                    self.instrument.writeParameter(118, 2)
+                    self.instrument_mutex.lock()
+                    try:
+                        self.instrument.writeParameter(118, 2)
+                    finally:
+                        self.instrument_mutex.unlock()
                     print("Safety alarm: ENABLED (Mode 2) - Immediate")
                 except Exception as e:
                     print(f"Failed to enable alarm: {e}")
@@ -1162,7 +1171,11 @@ class Bronkhost(QMainWindow):
         # 3. Attempt to read the new valve value
         time.sleep(0.1)
         try:
-            valve1_output = self.instrument.readParameter(55)
+            self.instrument_mutex.lock()  # <--- Lock
+            try:
+                valve1_output = self.instrument.readParameter(55)
+            finally:
+                self.instrument_mutex.unlock()
 
             if valve1_output is not None:
                 current_valve_value = calculate_valve_percentage(valve1_output)
@@ -1185,13 +1198,20 @@ class Bronkhost(QMainWindow):
         #self.win.closeButton.setStyleSheet("background-color: red")
         #self.win.openButton.setStyleSheet("background-color: gray")
         self.flicker_timer.start(500)  # 500 ms interval
-        self.instrument.writeParameter(12, 3)  # 'Valve Closed' command
+        self.instrument_mutex.lock()  # <--- Lock
+        try:
+            self.instrument.writeParameter(12, 3)  # 'Valve Closed' command
+        finally:
+            self.instrument_mutex.unlock()
         self.valve_status = "closed"
 
         # --- Disable Alarm ---
         try:
-            # [cite_start]Mode 0: Off [cite: 1172]
-            self.instrument.writeParameter(118, 0)
+            self.instrument_mutex.lock()  # <--- Lock
+            try:
+                self.instrument.writeParameter(118, 0)
+            finally:
+                self.instrument_mutex.unlock()
             print("Safety Alarm: DISABLED (Mode 0)")
         except Exception as e:
             print(f"Failed to disable alarm: {e}")
@@ -1218,12 +1238,14 @@ class Bronkhost(QMainWindow):
 
         if self.capacity > 0:
             propar_value = self.bar_to_propar(bar_setpoint, self.capacity)
-            self.instrument.writeParameter(9, propar_value)
-
-            # --- Re-engage control mode every time setpoint changes ---
-            # *** FIX 3: Ensure the PID command is sent to activate the new setpoint ***
-            if self.valve_status == "PID":
-                self.instrument.writeParameter(12, 0)  # 'PID Control' command
+            self.instrument_mutex.lock()
+            try:
+                self.instrument.writeParameter(9, propar_value)
+                # --- Re-engage control mode every time setpoint changes ---
+                if self.valve_status == "PID":
+                    self.instrument.writeParameter(12, 0)  # 'PID Control' command
+            finally:
+                self.instrument_mutex.unlock()
         else:
             print("Warning: Cannot set point, device capacity is unknown or zero.")
 
@@ -1232,7 +1254,11 @@ class Bronkhost(QMainWindow):
         if self.valve_status == "PID" and self.response_alarm_enabled:
             try:
                 print("Cooldown finished: Re-enabling Safety Alarm (Mode 2)")
-                self.instrument.writeParameter(118, 2)
+                self.instrument_mutex.lock()  # <--- ADD LOCK
+                try:
+                    self.instrument.writeParameter(118, 2)
+                finally:
+                    self.instrument_mutex.unlock()
             except Exception as e:
                 print(f"Failed to re-enable alarm: {e}")
 
@@ -1277,16 +1303,21 @@ class Bronkhost(QMainWindow):
 
         if hasattr(self, 'threadFlow'):
             self.threadFlow.stopThread()
+            # Wait for the thread to actually finish (blocking the close event slightly)
+            self.threadFlow.wait()
 
-        time.sleep(0.1)
         if self.connection_successful:
             if hasattr(self, 'instrument'):
-                self.instrument.writeParameter(12, 3)
-                print("Closing valve...")
-                self.win.label_valve_status.setText('Shut')
-                time.sleep(0.5)
-                self.instrument.master.propar.stop()
-                print("Connection closed.")
+                self.instrument_mutex.lock()
+                try:
+                    self.instrument.writeParameter(12, 3)
+                    print("Closing valve...")
+                    self.win.label_valve_status.setText('Shut')
+                    time.sleep(0.5)
+                    self.instrument.master.propar.stop()
+                    print("Connection closed.")
+                finally:
+                    self.instrument_mutex.unlock()
         event.accept()
 
     def propar_to_bar(self, propar_value, capacity):  # Added 'capacity' argument
@@ -1358,12 +1389,17 @@ class THREADFlow(QtCore.QThread):
             loop_start_time = time.time()
 
             try:
-                # --- Perform all reads ---
-                # This is the "Work" that causes latency (e.g., takes 0.05s)
-                alarm_status = self.instrument.readParameter(28)
-                raw_measure = self.instrument.readParameter(8)
-                valve1_output = self.instrument.readParameter(55)
+                # ACQUIRE LOCK BEFORE READING
+                self.parent.instrument_mutex.lock()
 
+                try:
+                    # --- Perform all reads ---
+                    # This is the "Work" that causes latency (e.g., takes 0.05s)
+                    alarm_status = self.instrument.readParameter(28)
+                    raw_measure = self.instrument.readParameter(8)
+                    valve1_output = self.instrument.readParameter(55)
+                finally:
+                    self.parent.instrument_mutex.unlock()
                 # --- Offline Logic ---
                 # If critical read fails (None), device is disconnected.
                 if raw_measure is None:

@@ -1,20 +1,157 @@
-from PyQt6.QtWidgets import QDialog
+from PyQt6.QtWidgets import (QDialog, QWidget, QHBoxLayout, QLineEdit,
+                             QPushButton, QLabel, QVBoxLayout)
 from PyQt6 import uic
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QShortcut, QKeySequence, QTextDocument, QTextCursor
+from PyQt6.QtCore import Qt
 import pathlib, os
 
 
 class HelpWindow(QDialog):
     def __init__(self, version="N/A", parent=None):
         super(HelpWindow, self).__init__(parent)
+
+        # 1. Load the UI
         uic.loadUi('help_window.ui', self)
+        self.help_text_edit.setStyleSheet("selection-background-color: #FFFF00; selection-color: #000000;")
+        # 2. Setup Basic Info
         self.version = version
         p = pathlib.Path(__file__)
         sepa = os.sep
         self.icon = str(p.parent) + sepa + 'icons' + sepa
         self.setWindowTitle("Application Help")
         self.setWindowIcon(QIcon(self.icon + 'LOA3.png'))
+
+        # 3. Populate Content
         self._populate_text()
+
+        # 4. Initialize the Search Feature
+        self._init_search_ui()
+
+    def _init_search_ui(self):
+        """
+        Creates a hidden search bar at the bottom of the layout
+        and sets up the Ctrl+F shortcut.
+        """
+        # --- A. Create the Search Widget Wrapper ---
+        self.search_widget = QWidget(self)
+        self.search_layout = QHBoxLayout(self.search_widget)
+        self.search_layout.setContentsMargins(0, 5, 0, 0)
+
+        # --- B. Create UI Elements ---
+        self.search_label = QLabel("Find:", self.search_widget)
+        self.search_input = QLineEdit(self.search_widget)
+        self.search_input.setPlaceholderText("Type text...")
+        self.search_input.setFixedWidth(200)
+
+        self.btn_next = QPushButton("Next", self.search_widget)
+        self.btn_prev = QPushButton("Prev.", self.search_widget)
+        self.btn_close = QPushButton("X", self.search_widget)
+        self.btn_close.setFixedWidth(30)
+        self.btn_close.setStyleSheet("color: red; font-weight: bold;")
+
+        # --- C. Add Elements to Search Layout ---
+        self.search_layout.addWidget(self.search_label)
+        self.search_layout.addWidget(self.search_input)
+        self.search_layout.addWidget(self.btn_next)
+        self.search_layout.addWidget(self.btn_prev)
+        self.search_layout.addStretch()  # Push everything to the left
+        self.search_layout.addWidget(self.btn_close)
+
+        # --- D. Insert into Main Layout ---
+        # IMPORTANT: This assumes your help_window.ui has a vertical layout.
+        # If self.layout() is None, we create one.
+        if self.layout() is None:
+            main_layout = QVBoxLayout(self)
+            # If you had widgets with absolute positioning, this might shift them.
+            # Assuming standard Designer usage:
+            if hasattr(self, 'help_text_edit'):
+                main_layout.addWidget(self.help_text_edit)
+            self.setLayout(main_layout)
+
+        # Add the search widget to the bottom of the dialog
+        self.layout().addWidget(self.search_widget)
+
+        # Hide it by default
+        self.search_widget.hide()
+
+        # --- E. Connect Signals ---
+        self.btn_next.clicked.connect(lambda: self.find_text(direction='next'))
+        self.btn_prev.clicked.connect(lambda: self.find_text(direction='prev'))
+        self.btn_close.clicked.connect(self.search_widget.hide)
+
+        # Search when pressing Enter in the box
+        #self.search_input.returnPressed.connect(lambda: self.find_text(direction='next'))
+        # Hide when pressing Escape in the box
+        self.escape_shortcut = QShortcut(QKeySequence("Esc"), self.search_widget)
+        self.escape_shortcut.activated.connect(self.search_widget.hide)
+
+        # --- F. Create Global Ctrl+F Shortcut ---
+        self.find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        self.find_shortcut.activated.connect(self.show_search_bar)
+
+    def show_search_bar(self):
+        """Shows the search bar and focuses the input field."""
+        self.search_widget.show()
+        self.search_input.setFocus()
+        self.search_input.selectAll()
+
+    def find_text(self, direction='next'):
+        """
+        Search for text. If it hits the end/start, it wraps around automatically.
+        """
+        search_term = self.search_input.text()
+        if not search_term:
+            return
+
+        # Configure Find Flags
+        flags = QTextDocument.FindFlag(0)  # Default is 0 (Forward)
+
+        if direction == 'prev':
+            flags = QTextDocument.FindFlag.FindBackward
+
+        # --- 1. Attempt Search from current cursor position ---
+        found = self.help_text_edit.find(search_term, flags)
+
+        # --- 2. If not found, Wrap Around and search again ---
+        if not found:
+            # Move cursor to the opposite end of the document to restart search
+            if direction == 'prev':
+                # If going back and hit top, go to bottom
+                self.help_text_edit.moveCursor(QTextCursor.MoveOperation.End)
+            else:
+                # If going forward and hit bottom, go to top
+                self.help_text_edit.moveCursor(QTextCursor.MoveOperation.Start)
+
+            # Try finding again from the new position
+            found = self.help_text_edit.find(search_term, flags)
+
+        # --- 3. Visual Feedback ---
+        if not found:
+            # If STILL not found (meaning the word isn't in the doc at all)
+            self.search_input.setStyleSheet("background-color: #ffcccc; color: black;")  # Red
+        else:
+            self.search_input.setStyleSheet("")  # Normal / White
+
+    def keyPressEvent(self, event):
+        """
+        Intercepts key presses to prevent Enter from closing the dialog
+        only when the search box is focused.
+        """
+        # 1. Check if the key pressed is Enter or Return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+
+            # 2. Check if the Search Input has focus
+            if self.search_input.hasFocus():
+                # Run the search logic
+                self.find_text(direction='next')
+
+                # 'accept' tells Qt "I handled this, stop processing."
+                # This prevents the signal from reaching the QDialog close handler.
+                event.accept()
+                return
+
+        # 3. For all other keys (like Esc), let QDialog handle them normally
+        super().keyPressEvent(event)
 
     def _populate_text(self):
         # You can use simple HTML for formatting
@@ -33,8 +170,14 @@ class HelpWindow(QDialog):
                 <li><b>Setpoint Pre-configuration:</b> The setpoint value can be modified even while  valves are closed, allowing the user to prepare the next setting in advance.</li>
                 <li><b>Exit Safety:</b> To ensure a safe state upon exit, the application sends a final command to <b>close valves</b> before terminating the connection.</li>
                 <li><b>Configuration Initialization:</b> On launch, the system parses <code>config.ini</code> to load critical runtime parameters such as the thread polling interval, plot history size, and maximum pressure limits. 
-                <br><i>(Please refer to the <b>Configuration Guide</b> at the bottom of this text for a detailed description of all settings.)</i></li>
+                <br><i>(Please refer to the <b>Configuration File</b> at the bottom of this text for a detailed description of all settings.)</i></li>
             </ul>
+            
+            <h4>Important Observation</h4> 
+            <ul> <li><b>Internal Leakage:</b> 
+            When the system is in <b>Shut Mode</b> (both valves closed) while pressurized, a minor internal leak into the conduit may occur. 
+            For example, an inlet pressure of 100 bar can raise the conduit pressure by a few bars over several hours. 
+            The rate of this leakage may vary depending on the specific valve unit.</li> </ul>
             
             <h4>Deviation Safety Protocol</h4> 
             <ul> 
@@ -80,7 +223,7 @@ class HelpWindow(QDialog):
          product of the circular buffer capacity (max_history) and the thread polling interval (thread_sleep_time). 
          Once this limit is reached, the oldest data points are automatically discarded to make room for new measurements.</li>
         <li><b>Plot Button:</b> Opens a real-time graph of pressure (default: yellow) and setpoint (default: red) over time. The graph's 
-        visual style is customizable via the config.ini file, where users can define specific hexadecimal color codes 
+        visual style is customizable via the <code>config.ini</code> file, where users can define specific hexadecimal color codes 
         (e.g., #FFFF00) to distinguish between the real-time pressure reading and the setpoint target. Data is acquired and stored 
         using absolute Unix timestamps (UTC) to ensure long-term consistency, while a custom axis renderer dynamically 
         converts these values to the local time zone for display.</li>
@@ -99,16 +242,16 @@ class HelpWindow(QDialog):
         <h4>Controls</h4>
         <ul>
         <li><b>P Set (bar):</b> Set the desired pressure in bar. The value is sent when user presses Enter or when the input box loses focus. 
-        The maximum value is limited by the device capacity (physical limit) or the user-defined safety preset "max_set_pressure" in the config.ini file.</li>
+        The maximum value is limited by the device capacity (physical limit) or the user-defined safety preset "max_set_pressure" in the <code>config.ini</code> file.</li>
         <li><b>Purge Button:</b> Activates the purge sequence: Sets the setpoint to the <b>configured purge pressure</b> and switches the device to <b>PID mode</b>. 
         It maintains this state for the configured duration before <b>automatically closing the valve</b>.</li>
         <li><b>Valve Mode Radio Buttons:</b> The <b>PID</b> button enables automatic control, while the <b>Shut</b> button 
         fully closes both the input and relief valves.</li>
-        <li><b>Advanced Button:</b> Opens a password-protected panel for advanced settings. The password can be modified in the config.ini file.</li>
+        <li><b>Advanced Button:</b> Opens a password-protected panel for advanced settings. The password can be modified in the <code>config.ini</code> file.</li>
         </ul>
         
         <h4>Advanced Settings</h4>
-        <p>This panel is accessed via the 'Advanced' button and requires a password. The password can be modified in the config.ini file. 
+        <p>This panel is accessed via the 'Advanced' button and requires a password. The password can be modified in the <code>config.ini</code> file. 
         Upon opening, the software reads and displays the following settings from the device. 
         After editing the values, press the 'SET ALL' button to save them back to the device:</p>
         <ul>
@@ -123,8 +266,8 @@ class HelpWindow(QDialog):
           <li><b>UserTag: </b> User definable alias string. Maximum 16 characters allow the user to give the instrument his own tag name.</li>
         </ul>
         <hr>
-        <h2>Configuration Guide (config.ini)</h2>
-        <p>The application behavior is controlled by the <b>config.ini</b> file located in the program folder. Below is a reference for the available settings.</p>
+        <h2>Configuration Guide (<code>config.ini</code>)</h2>
+        <p>The application behavior is controlled by the <code>config.ini</code> file located in the program folder. Below is a reference for the available settings.</p>
         
         
         

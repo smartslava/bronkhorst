@@ -34,11 +34,18 @@ class AdminWindow(QMainWindow):
         # Read the current PID values when the window opens
         self.read_pid_parameters()
 
-
     def read_pid_parameters(self):
         """Reads the current PID values from the instrument and updates the UI."""
-        # Use the instrument from the main window
         instrument = self.main_window.instrument
+
+        # 1. Initialize variables to None
+        # (Prevents "UnboundLocalError" if the try block crashes early)
+        p_gain = i_gain = d_gain = speed_gain = None
+        open_gain = norm_gain = stab_gain = hyster_gain = user_tag_raw = None
+        user_tag = "Unknown"
+
+        # 2. Hardware Read (LOCKED)
+        self.main_window.instrument_mutex.lock()
         try:
             p_gain = instrument.readParameter(167)
             i_gain = instrument.readParameter(168)
@@ -49,30 +56,33 @@ class AdminWindow(QMainWindow):
             stab_gain = instrument.readParameter(141)
             hyster_gain = instrument.readParameter(361)
             user_tag_raw = instrument.readParameter(115)
-            user_tag = str(user_tag_raw)
-            if p_gain is not None:
-                self.p_gain_box.setValue(p_gain)
-            if i_gain is not None:
-                self.i_gain_box.setValue(i_gain)
-            if d_gain is not None:
-                self.d_gain_box.setValue(d_gain)
-            if speed_gain is not None:
-                self.speed_gain_box.setValue(speed_gain)
-            if open_gain is not None:
-                self.open_gain_box.setValue(open_gain)
-            if norm_gain is not None:
-                self.norm_gain_box.setValue(norm_gain)
-            if stab_gain is not None:
-                self.stab_gain_box.setValue(stab_gain)
-            if hyster_gain is not None:
-                self.hyster_gain_box.setValue(hyster_gain)
-            if user_tag is not None:
+        except Exception as e:
+            print(f"Hardware read failed: {e}")
+        finally:
+            self.main_window.instrument_mutex.unlock()
+
+        # 3. UI Update (Safe to do unlocked)
+        try:
+            if p_gain is not None: self.p_gain_box.setValue(p_gain)
+            if i_gain is not None: self.i_gain_box.setValue(i_gain)
+            if d_gain is not None: self.d_gain_box.setValue(d_gain)
+            if speed_gain is not None: self.speed_gain_box.setValue(speed_gain)
+            if open_gain is not None: self.open_gain_box.setValue(open_gain)
+            if norm_gain is not None: self.norm_gain_box.setValue(norm_gain)
+            if stab_gain is not None: self.stab_gain_box.setValue(stab_gain)
+            if hyster_gain is not None: self.hyster_gain_box.setValue(hyster_gain)
+
+            # Logic Fix: Only convert user_tag if it's not None
+            if user_tag_raw is not None:
+                user_tag = str(user_tag_raw)
                 self.user_tag_lineedit.setText(user_tag.strip())
 
+            # --- RESTORED PRINT STATEMENT ---
+            print(
+                f"Read valve control parameters: Kp={p_gain}, Ti={i_gain}, Td={d_gain}, Kspeed={speed_gain}, Kopen={open_gain}, Knormal={norm_gain}, Kstable={stab_gain}, Hysteresis={hyster_gain}, UserTag={user_tag}")
 
-            print(f"Read valve control parameters: Kp={p_gain}, Ti={i_gain}, Td={d_gain}, Kspeed={speed_gain},Kopen={open_gain}, Knormal={norm_gain},Kstable={stab_gain},Hysteresis={hyster_gain},UserTag={user_tag}")
         except Exception as e:
-            print(f"Error reading valve control parameters: {e}")
+            print(f"Error updating UI: {e}")
 
     def set_pid_parameters(self):
         """Attempts a full sequence to unlock, write, and save new PID values."""
@@ -92,26 +102,27 @@ class AdminWindow(QMainWindow):
 
             # --- Step 1: Set Control Mode to allow RS232 writes ---
             print("Setting device to initreset: enable changes mode...")
-            instrument.writeParameter(7, 64)
-            time.sleep(0.1)
-
-            # --- Step 2: Write the new PID values ---
-            print("2. Writing new control values...")
-            instrument.writeParameter(167, p_gain)
-            instrument.writeParameter(168, i_gain)
-            instrument.writeParameter(169, d_gain)
-            instrument.writeParameter(254, speed_gain)
-            instrument.writeParameter(165, int(open_gain))
-            instrument.writeParameter(72, int(norm_gain))
-            instrument.writeParameter(141, int(stab_gain))
-            instrument.writeParameter(361, hyster_gain)
-            instrument.writeParameter(115, user_tag)
-            time.sleep(0.1)
-
-            print("Setting device to initreset: disable changes mode...")
-            instrument.writeParameter(7, 0)
-            time.sleep(0.1)
-
+            self.main_window.instrument_mutex.lock()  # <--- ADD LOCK
+            try:
+                instrument.writeParameter(7, 64)
+                #time.sleep(0.1)
+                # --- Step 2: Write the new PID values ---
+                print("2. Writing new control values...")
+                instrument.writeParameter(167, p_gain)
+                instrument.writeParameter(168, i_gain)
+                instrument.writeParameter(169, d_gain)
+                instrument.writeParameter(254, speed_gain)
+                instrument.writeParameter(165, int(open_gain))
+                instrument.writeParameter(72, int(norm_gain))
+                instrument.writeParameter(141, int(stab_gain))
+                instrument.writeParameter(361, hyster_gain)
+                instrument.writeParameter(115, user_tag)
+                #time.sleep(0.1)
+                print("Setting device to initreset: disable changes mode...")
+                instrument.writeParameter(7, 0)
+                #time.sleep(0.1)
+            finally:
+                self.main_window.instrument_mutex.unlock()
             print(f"Set and saved new control values: Kp={p_gain}, Ti={i_gain}, Td={d_gain}, Kspeed={speed_gain},Kopen={open_gain}, Knormal={norm_gain},Kstable={stab_gain},Hysteresis={hyster_gain},UserTag={user_tag}")
 
             #QMessageBox.information(self, "Success", "Control parameters have been updated.")
@@ -153,7 +164,11 @@ class AdminWindow(QMainWindow):
             self.force_open_button.setStyleSheet("background-color: red;")
 
             # Send the command to the instrument
-            instrument.writeParameter(12, 8)  # 'Valve Forced Open' command
+            self.main_window.instrument_mutex.lock()  # <--- ADD LOCK
+            try:
+                instrument.writeParameter(12, 8)  # 'Valve Forced Open' command
+            finally:
+                self.main_window.instrument_mutex.unlock()
 
             # Update the state variable in the MAIN window instance
             self.main_window.valve_status = "force_open"
