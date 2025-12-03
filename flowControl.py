@@ -44,7 +44,7 @@ def load_configuration():
             'set_point_above_tolerance': '1',
             'set_point_above_delay': '2',
             'set_point_above_safety_enable': '1',
-            'purge_shut_delay': '2'
+            'purge_shut_delay_timeout': '7'
             # ----------------------
         },
         'Thread': {'thread_sleep_time': '0.2'},
@@ -374,8 +374,18 @@ class Bronkhost(QMainWindow):
         self.rearm_timer.timeout.connect(self._reenable_alarm)
         self.last_known_setpoint = 0.0  # Track previous setpoint
         self.lower_setpoint_cooldown = 2.0  # Default value, updated later from config
-        self.was_last_change_decrease = False
+        #self.was_last_change_decrease = False
+        self.is_purging = False
         self.instrument_mutex = QMutex()
+
+        self.purge_target = 0.0  # Default target
+        self.purge_timeout_limit = 10.0  # Default timeout
+
+        self.current_pressure_bar = 0.0  # Stores the latest reading
+        self.purge_target = 0.0  # Stores target for check
+        self.purge_check_timer = QTimer(self)
+        self.purge_check_timer.timeout.connect(self._check_purge_condition)
+        self.purge_start_time = 0.0
 
         # --- REDIRECT PRINT STATEMENTS ---
         self.log_stream = Stream()
@@ -530,14 +540,15 @@ class Bronkhost(QMainWindow):
         Handles the CRITICAL_ALARM signal.
         AUTOMATIC SAFETY SEQUENCE:
         1. Immediate Visual Update.
-        2. Immediate Reset & Hardware Sync.
-        3. Schedule Shutdown Timer.
-        4. Notify user (Non-blocking logic, Blocking UI).
+        2. Immediate Reset.
+        3. Trigger Shared Purge Sequence (Smart Logic).
+        4. Notify user.
         """
         # 1. Cooldown Check (Prevent spamming)
         if self.alarm_popup_active:
             return
 
+        # Simple debounce to prevent multiple triggers in rapid succession
         delay_setting = self.config['Safety'].getfloat('set_point_above_delay', 2.0)
         cooldown_period = delay_setting + 1.0
         if (time.time() - self.last_reset_time) < cooldown_period:
@@ -547,42 +558,31 @@ class Bronkhost(QMainWindow):
         print(f"CRITICAL ALARM {alarm_code}: Executing AUTO-SAFETY sequence.")
 
         # ----------------------------------------------------------
-        # STEP 1: IMMEDIATE ACTIONS (Do not wait for user)
+        # STEP 1: IMMEDIATE ACTIONS
         # ----------------------------------------------------------
 
-        # A. Visual Update
-        safe_bar = self.get_safe_setpoint_bar()
+        # A. Visual Update (Set UI to safe value immediately)
+        safe_bar = self.get_safe_setpoint_bar()  # Returns 0.0
         if self.plot_window is not None:
             self.plot_window.set_setpoint_value(safe_bar)
         self.win.setpoint.blockSignals(True)
         self.win.setpoint.setValue(safe_bar)
         self.win.setpoint.blockSignals(False)
 
-        # B. Reset Alarm Bit
+        # B. Reset Alarm Bit (Clear the current error on device)
         self.reset_alarm_cmd()
 
-        # C. Sync Hardware Setpoint (Hold Safe Pressure)
-        if self.capacity > 0:
-            safe_propar = self.bar_to_propar(safe_bar, self.capacity)
-            try:
-                self.instrument_mutex.lock()  # <--- ADD LOCK
-                try:
-                    self.instrument.writeParameter(9, safe_propar)
-                finally:
-                    self.instrument_mutex.unlock()  # <--- RELEASE
-                print(f"System Holding at Safe State: {safe_bar} bar")
-            except Exception as e:
-                print(f"Warning: Hardware sync failed: {e}")
+        # C. TRIGGER THE SMART PURGE SEQUENCE
+        # This replaces the old manual timer logic.
+        # It will:
+        #   1. Set is_purging = True (Disable alarms)
+        #   2. Send Setpoint 0.0 bar
+        #   3. Switch to PID
+        #   4. Start the 200ms loop to check for 0 bar OR timeout
+        print("Transferring control to Purge Logic...")
+        self.purge_system()
 
-        # D. Schedule Shutdown
-        shut_delay = self.config['Safety'].getfloat('purge_shut_delay', 1.0)
-        print(f"Auto-Shutdown scheduled in {shut_delay} seconds...")
-
-        # The timer runs in the background event loop.
-        # It will fire even if the popup below is still open.
-        QTimer.singleShot(int(shut_delay * 1000), self._finalize_purge)
-
-        # E. Update Cooldown Tracker
+        # D. Update Cooldown Tracker
         self.last_reset_time = time.time()
 
         # ----------------------------------------------------------
@@ -592,17 +592,19 @@ class Bronkhost(QMainWindow):
         msg.setIcon(QMessageBox.Icon.Critical)
         msg.setWindowTitle("SAFETY SHUTDOWN")
         msg.setText("<b>Pressure Deviation Above Setpoint Detected</b>")
+
+        # We update the text to reflect the new logic
         msg.setInformativeText(
-            f"The system has initiated an automatic safety shutdown.\n\n"
-            f"1. Purging at {safe_bar} bar for {shut_delay} seconds.\n"
-            f"2. Closing valve automatically.\n\n"
-            f"Try to reduce PID regulation speed.\n\n"
+            f"The system has initiated an automatic safety purge.\n\n"
+            f"1. Target: {self.purge_target} bar\n"
+            f"2. Timeout: {self.purge_timeout_limit} seconds\n"
+            f"3. Logic: System will close valve if target reached OR timeout expires.\n\n"
             f"Diagnostic Code: {alarm_code}"
         )
         msg.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
 
-        # This blocks the User Interface (mouse clicks) so they must acknowledge,
-        # BUT the QTimer for shutdown continues running in the background.
+        # This blocks the User Interface (mouse clicks),
+        # BUT the purge_check_timer continues running in the background.
         msg.exec()
 
         self.alarm_popup_active = False
@@ -944,13 +946,19 @@ class Bronkhost(QMainWindow):
             safe_pressure_bar = self.get_safe_setpoint_bar()
             # 2. Read Configuration Values
             tol_bar = self.config['Safety'].getfloat('set_point_above_tolerance', 2.0)
+            self.safety_tolerance_bar = tol_bar
             print(f"Pressure tolerance: {tol_bar} bars")
             delay_sec = self.config['Safety'].getint('set_point_above_delay', 2)
             print(f"Alarm activation delay: {delay_sec} s")
             # --- Read Cooldown Delay  ---
             self.lower_setpoint_cooldown = self.config['Safety'].getfloat('set_point_lower_cooldown_delay', 2.0)
             print(f"Lower Setpoint Cooldown: {self.lower_setpoint_cooldown} s")
+            # ---  Purge Settings Here ---
+            self.purge_timeout_limit = self.config['Safety'].getfloat('purge_shut_delay_timeout', 5.0)
+            print(f"Purge delay timeout={self.purge_timeout_limit} s")
             print("------")
+            self.purge_target = 0.0  # Hardcoded target
+            print(f"Hardcoded Purge setpoint={self.purge_target} bar")
 
             # 3. Calculate Device Integers (0-32000)
 
@@ -1021,6 +1029,14 @@ class Bronkhost(QMainWindow):
 
     def on_mode_changed(self, button):
         """Central handler for radio button clicks"""
+
+        # --- NEW: If user manually changes mode, cancel any active purge ---
+        if self.is_purging:
+            print("Manual Override: Cancelling Purge Sequence.")
+            self.is_purging = False
+            if self.purge_check_timer.isActive():
+                self.purge_check_timer.stop()
+        # -------------------------------------------------------------------
         if button == self.win.radioPID:
             self.valve_PID()
         elif button == self.win.radioShut:
@@ -1031,46 +1047,73 @@ class Bronkhost(QMainWindow):
         Purge Sequence:
         1. Set Setpoint to configured purge pressure.
         2. Switch to PID mode.
-        3. Wait (non-blocking) for configured delay.
-        4. Switch to Shut/Closed mode.
+        3. Start a timer that checks if we reached target OR if timeout occurred.
         """
         if self.is_offline or not self.connection_successful:
             print("Purge skipped: Device is offline.")
             return
 
-        # 1. Read Config
-        try:
-            purge_sp = 0.0  # Static definition (hardcoded)
-            delay_sec = self.config['Safety'].getfloat('purge_shut_delay', 1.0)
-        except ValueError:
-            print("Config Error: Invalid purge settings. Using defaults (0.0 bar, 1s).")
-            delay_sec = 1.0
+        # *** FIX: UNINDENTED THIS BLOCK ***
+        # --- 1. SET FLAG & DISABLE ALARM ---
+        self.is_purging = True
 
-        print(f"--- Purge Sequence Initiated: Target={purge_sp} bar, Wait={delay_sec}s ---")
+        # Explicitly disable alarm (Param 118 -> 0)
+        try:
+            self.instrument_mutex.lock()
+            self.instrument.writeParameter(118, 0)
+        except Exception as e:
+            print(f"Error disabling alarm for purge: {e}")
+        finally:
+            self.instrument_mutex.unlock()
+        # -----------------------------------
+
+        print(f"--- Purge Initiated: Target={self.purge_target} bar, Max Wait={self.purge_timeout_limit}s ---")
 
         # 2. Update UI and Send Setpoint
-        # The spinbox automatically clamps the value if it exceeds device max
-        self.win.setpoint.setValue(purge_sp)
-
-        # Explicitly call setPoint to send Param 9 to the device
+        self.win.setpoint.setValue(self.purge_target)
         self.setPoint()
 
         # 3. Activate PID Mode
         self.valve_PID(force_cooldown=True)
-        #self.valve_PID()
 
-        # 4. Schedule the Shutdown (Non-blocking)
-        # We use QTimer.singleShot to trigger the close function after X milliseconds.
-        # This keeps the GUI responsive (plotting continues) during the wait.
-        print(f"Purging is active. Closing in {delay_sec} seconds...")
-        QTimer.singleShot(int(delay_sec * 1000), self._finalize_purge)
+        # 4. Start the Logic Check
+        self.purge_start_time = time.time()
+
+        # Check the condition every 200ms (0.2 seconds)
+        self.purge_check_timer.start(200)
+
+    def _check_purge_condition(self):
+        """
+        Called repeatedly by purge_check_timer.
+        Checks if pressure is close to target or if timeout has passed.
+        """
+        # Define "Close enough" (e.g., +/- 0.5 bar)
+        TOLERANCE = 1.5
+
+        elapsed = time.time() - self.purge_start_time
+        current_diff = abs(self.current_pressure_bar - self.purge_target)
+
+        # 1. SUCCESS CONDITION: Pressure is within tolerance
+        if current_diff <= TOLERANCE:
+            print(f"Purge Target Reached! (Diff: {current_diff:.4f} bar). Closing.")
+            self._finalize_purge()
+
+        # 2. TIMEOUT CONDITION: Time exceeded limit
+        elif elapsed >= self.purge_timeout_limit:
+            print(f"Purge Timeout ({elapsed:.1f}s > {self.purge_timeout_limit}s). Forcing Close.")
+            self._finalize_purge()
+
+        # 3. Otherwise, do nothing and wait for next timer tick
 
     def _finalize_purge(self):
         """
-        Callback function triggered by the QTimer after the purge delay.
-        Closes the valve and updates the UI.
+        Stops the timer and closes the valves.
         """
-        print("Purge: Delay finished. Closing valves.")
+        # Stop the checking timer so it doesn't fire again
+        if self.purge_check_timer.isActive():
+            self.purge_check_timer.stop()
+        self.is_purging = False
+        print("Purge Sequence Complete. Closing valves.")
 
         # Close the valve
         self.valve_close()
@@ -1104,37 +1147,31 @@ class Bronkhost(QMainWindow):
 
     def _handle_setpoint_safety_logic(self, new_bar_setpoint):
         """
-        Checks if the setpoint is being lowered and updates the direction flag.
+        Safety Check when user changes Setpoint while in PID.
         """
-        # 1. Determine direction (Always track this, even if alarms are off)
-        if new_bar_setpoint < self.last_known_setpoint:
-            self.was_last_change_decrease = True
-            print(f"Setpoint lowered (Old:{self.last_known_setpoint} -> New:{new_bar_setpoint})")
+        # --- NEW: Ignore check if Purging ---
+        if self.is_purging:
+            return
+        # ------------------------------------
 
-            # If we are ALREADY in PID, try to trigger cooldown
-            if self.valve_status == "PID":
-                # This function checks 'if self.response_alarm_enabled' internally
+        if self.valve_status == "PID":
+            # Calculate the threshold where the alarm would actually trigger
+            alarm_threshold = new_bar_setpoint + self.safety_tolerance_bar
+
+            if self.current_pressure_bar > alarm_threshold:
+                print(f"PID Safety: Pressure ({self.current_pressure_bar:.2f}) > "
+                      f"Limit ({alarm_threshold:.2f}). Triggering cooldown.")
                 self._trigger_alarm_cooldown()
 
-        elif new_bar_setpoint > self.last_known_setpoint:
-            self.was_last_change_decrease = False
-            # No immediate action needed for increase
-
-        # 2. Always update the tracker
-        self.last_known_setpoint = new_bar_setpoint
-
-    def valve_PID(self,force_cooldown=False):
+    def valve_PID(self, force_cooldown=False):
         print('Valve PID controlled')
 
         # 1. Update UI Visuals
         self.flicker_timer.stop()
         self.win.label_valve_status.setStyleSheet("color: white;")
         self.win.label_valve_status.setText('PID')
-
-        # Ensure the radio button matches the logic
         self.win.radioPID.setChecked(True)
 
-        # Reset labels to "Waiting" state
         if hasattr(self.win, 'inlet_valve_label'):
             self.win.inlet_valve_label.setStyleSheet("color: white;")
             self.win.inlet_valve_label.setText("... %")
@@ -1149,14 +1186,27 @@ class Bronkhost(QMainWindow):
         finally:
             self.instrument_mutex.unlock()
 
-        # --- Enable Alarm if Configured ---
+        # 3. ALARM LOGIC
         if self.response_alarm_enabled:
-            # Check if we lowered setpoint OR if cooldown is forced (e.g. by Purge)
-            if self.was_last_change_decrease or force_cooldown:
-                print("Entering PID (Setpoint drop or Purge): Triggering Cooldown.")
+
+            # Calculate the safe limit based on UI setpoint + Tolerance
+            current_setpoint = self.win.setpoint.value()
+            alarm_threshold = current_setpoint + self.safety_tolerance_bar
+
+            # Case A: Purge Requested (Always force cooldown)
+            if force_cooldown:
+                print("Entering PID (Forced): Triggering Cooldown.")
                 self._trigger_alarm_cooldown()
+
+            # Case B: Smart Safety Check
+            # Only disable alarm if pressure is actually high enough to trigger it
+            elif self.current_pressure_bar > alarm_threshold:
+                print(f"Entering PID: Pressure ({self.current_pressure_bar:.2f}) > "
+                      f"Limit ({alarm_threshold:.2f}). Triggering Cooldown.")
+                self._trigger_alarm_cooldown()
+
+            # Case C: Safe Condition (Pressure is within tolerance)
             else:
-                # Standard behavior: Enable alarm immediately
                 try:
                     self.instrument_mutex.lock()
                     try:
@@ -1166,12 +1216,11 @@ class Bronkhost(QMainWindow):
                     print("Safety alarm: ENABLED (Mode 2) - Immediate")
                 except Exception as e:
                     print(f"Failed to enable alarm: {e}")
-        # ---------------------------------------
 
-        # 3. Attempt to read the new valve value
+        # 4. Attempt to read the new valve value
         time.sleep(0.1)
         try:
-            self.instrument_mutex.lock()  # <--- Lock
+            self.instrument_mutex.lock()
             try:
                 valve1_output = self.instrument.readParameter(55)
             finally:
@@ -1181,16 +1230,12 @@ class Bronkhost(QMainWindow):
                 current_valve_value = calculate_valve_percentage(valve1_output)
                 self.update_inlet_valve_display(current_valve_value)
             else:
-                # If read returns None (communication glitch)
                 if hasattr(self.win, 'inlet_valve_label'):
                     self.win.inlet_valve_label.setText("...")
-
         except Exception as e:
-            # If read throws an error
             print(f"Failed to perform initial valve read: {e}")
             if hasattr(self.win, 'inlet_valve_label'):
                 self.win.inlet_valve_label.setText("...")
-
 
     def valve_close(self):
         print('Valve closed')
@@ -1250,11 +1295,35 @@ class Bronkhost(QMainWindow):
             print("Warning: Cannot set point, device capacity is unknown or zero.")
 
     def _reenable_alarm(self):
-        """Re-enables the alarm if PID mode is still active."""
+        """
+        Re-enables the alarm if PID mode is still active.
+        NEW: Checks if pressure is actually safe before arming.
+        """
+        # 1. If Purging, do nothing (Purge logic owns the alarm state)
+        if self.is_purging:
+            return
+
+        # 2. If Alarm is supposed to be on...
         if self.valve_status == "PID" and self.response_alarm_enabled:
+
+            # --- SMART CHECK ---
+            # Calculate where the alarm WOULD trigger (Setpoint + Tolerance)
+            current_limit = self.win.setpoint.value() + self.safety_tolerance_bar
+
+            # If we are still above that limit, DO NOT enable alarm. Wait again.
+            if self.current_pressure_bar > current_limit:
+                print(f"Cooldown Check: Pressure ({self.current_pressure_bar:.2f}) > "
+                      f"Limit ({current_limit:.2f}). Extending wait...")
+
+                # Restart the timer for another cycle (e.g. another 5 seconds)
+                # This gives the physics time to catch up
+                self.rearm_timer.start(int(self.lower_setpoint_cooldown * 1000))
+                return
+            # -------------------
+
             try:
-                print("Cooldown finished: Re-enabling Safety Alarm (Mode 2)")
-                self.instrument_mutex.lock()  # <--- ADD LOCK
+                print("Cooldown finished & Pressure Safe: Re-enabling Safety Alarm (Mode 2)")
+                self.instrument_mutex.lock()
                 try:
                     self.instrument.writeParameter(118, 2)
                 finally:
@@ -1281,6 +1350,7 @@ class Bronkhost(QMainWindow):
             absolute_value = (float(M) / 100.0) * self.capacity
             #if hasattr(self.win, 'absolute_measure'):
             #    self.win.absolute_measure.setText(f"{absolute_value:.2f}")
+            self.current_pressure_bar = float(M)
             s_percent = float(M)
             # Use f-string formatting to always show two decimal places
             self.win.measure.setText(f"{s_percent:.2f}")

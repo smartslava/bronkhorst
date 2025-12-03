@@ -418,7 +418,7 @@ QGroupBox::title {
           </size>
          </property>
          <property name="decimals">
-          <number>5</number>
+          <number>6</number>
          </property>
          <property name="maximum">
           <double>1.000000000000000</double>

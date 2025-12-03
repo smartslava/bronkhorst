@@ -179,22 +179,33 @@ class HelpWindow(QDialog):
             For example, an inlet pressure of 100 bar can raise the conduit pressure by a few bars over several hours. 
             The rate of this leakage may vary depending on the specific valve unit.</li> </ul>
             
-            <h4>Deviation Safety Protocol</h4> 
-            <ul> 
-                <li><b>Active Monitoring:</b> When PID control is active, the system 
-                enables a hardware-level alarm (Response Alarm Mode 2) to monitor pressure deviation against the 
-                <b>tolerance limit</b> defined in the config.</li> 
-                <li><b>Smart Transient Protection:</b> 
-                To prevent false alarms during intentional pressure drops, the safety system automatically 
-                applies a <b>"Cooldown" (Grace Period)</b> whenever the setpoint is lowered or a Purge is initiated. 
-                The alarm is temporarily disabled for a configurable duration (default 2s) to allow pressure to stabilize downwards.
-                </li> <li><b>Immediate Reaction:</b> If the measured pressure exceeds the threshold (Setpoint + Tolerance) 
-                outside of the cooldown period, the device <b>automatically forces the setpoint to 0.0 bar</b> to relieve 
-                system pressure immediately.</li> <li><b>Auto-Shutdown Sequence:</b> Simultaneously, the software triggers 
-                an automatic safety timer. It holds the system at PID mode set to 0.0 bar for the duration of the <i>purge_shut_delay</i>, 
-                and then <b>automatically closes valves</b> to fully secure the system.</li> <li><b>Operator Alert:</b> 
-                A diagnostic popup is displayed to notify the user that an automatic safety shutdown has occurred.</li> 
-            </ul>
+            
+<h4>Deviation Safety Protocol</h4> 
+<ul> 
+    <li><b>Active Monitoring:</b> When PID control is active, the system 
+    enables a hardware-level alarm (Response Alarm Mode 2) to monitor pressure deviation against the 
+    <b>tolerance limit</b> defined in the config.</li> 
+
+    <li><b>Transient Protection:</b> 
+    To prevent false alarms during intentional pressure drops, the system compares the 
+    <b>Current Pressure</b> against the <b>New Setpoint</b>. If the pressure is currently unsafe 
+    (higher than the new Setpoint + Tolerance), the alarm is temporarily paused (Cooldown) to allow 
+    the pressure to stabilize downwards without triggering a fault.
+    </li> 
+
+    <li><b>Immediate Reaction:</b> If the measured pressure exceeds the threshold (Setpoint + Tolerance) 
+    while the alarm is active, the device <b>automatically triggers the Safety Purge Protocol</b>.</li> 
+
+    <li><b>Safety Purge Protocol:</b> 
+    The software takes control to safely vent the system. It sets the target pressure to <b>0.0 bar</b> 
+    and monitors the drop. The system will <b>automatically close valves</b> 
+    as soon as the pressure reaches the safe target (0.0 bars + Tolerance), OR if the safety configurable timeout (<i>purge_shut_delay_timeout</i>) expires.
+    </li> 
+
+    <li><b>Operator Alert:</b> 
+    A diagnostic popup is displayed to notify the user that an automatic safety shutdown (Safety Purge) has occurred, 
+    including the diagnostic code.</li> 
+</ul>
         
         <h4>User Tag</h4>
         <ul>
@@ -243,8 +254,9 @@ class HelpWindow(QDialog):
         <ul>
         <li><b>P Set (bar):</b> Set the desired pressure in bar. The value is sent when user presses Enter or when the input box loses focus. 
         The maximum value is limited by the device capacity (physical limit) or the user-defined safety preset "max_set_pressure" in the <code>config.ini</code> file.</li>
-        <li><b>Purge Button:</b> Activates the purge sequence: Sets the setpoint to the <b>configured purge pressure</b> and switches the device to <b>PID mode</b>. 
-        It maintains this state for the configured duration before <b>automatically closing the valve</b>.</li>
+        <li><b>Purge Button:</b> Activates the purge sequence: Sets the setpoint to the <b>configured purge pressure</b> (default 0.0 bar) 
+        and switches the device to <b>PID mode</b>. It monitors the pressure drop and <b>automatically closes valves</b> 
+        once the target is reached or the safety timeout expires.</li>
         <li><b>Valve Mode Radio Buttons:</b> The <b>PID</b> button enables automatic control, while the <b>Shut</b> button 
         fully closes both the input and relief valves.</li>
         <li><b>Advanced Button:</b> Opens a password-protected panel for advanced settings. The password can be modified in the <code>config.ini</code> file.</li>
@@ -275,11 +287,15 @@ class HelpWindow(QDialog):
         <p>Critical settings for device limits and automatic safety protocols.</p>
         <ul>
             <li><span class="param">max_set_pressure:</span> The absolute maximum pressure (bar) the user can enter in the UI. If this exceeds the physical device limit, the device limit is used.</li>
-            <li><span class="param">purge_shut_delay:</span> Time (seconds) the system holds the purge pressure before closing valves completely.</li>
+           <li><span class="param">purge_shut_delay_timeout:</span> The <b>maximum duration</b> (seconds) the system will 
+           attempt to reach the purge target pressure. If the target is reached sooner, the valves close immediately; 
+           otherwise, the system forces a shutdown once this timer expires.</li>
             <li><span class="param">set_point_above_safety_enable:</span> Master switch for the Deviation Alarm (1 = On, 0 = Off).</li>
             <li><span class="param">set_point_above_tolerance:</span> The allowed deviation (in bar) above the current setpoint. If <i>Measure > Setpoint + Upper Tolerance</i>, the alarm triggers. Tolerance below the setpoint is ignored.</li>
             <li><span class="param">set_point_above_delay:</span> Duration (seconds) the high pressure must persist before the safety shutdown is triggered.</li>
-            <li><span class="param">set_point_lower_cooldown_delay:</span> Duration (seconds) of the safety grace period during which the alarm is temporarily deactivated when lowering the setpoint or purging.</li>
+           <li><span class="param">set_point_lower_cooldown_delay:</span> The duration (seconds) of the safety grace period. 
+           The alarm is deactivated for this interval when lowering the setpoint or purging; if the pressure remains larger than <b>Target Setpoint</b> + Tolerance after this time, 
+           the grace period <b>extends automatically</b> until safe.</li>
         </ul>
         
         <h3>[Connection]</h3>
