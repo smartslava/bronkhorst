@@ -29,6 +29,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 import configparser
 
+from gasServer import GasServer
 
 def load_configuration():
     config = configparser.ConfigParser()
@@ -503,9 +504,13 @@ class Bronkhost(QMainWindow):
         self.threadFlow = THREADFlow(self, capacity=self.capacity, thread_sleep_time=thread_time)
         #self.threadFlow = THREADFlow(self, capacity=self.capacity)
         self.threadFlow.start()
+        port = str(self.config["Server"].get("port", "0123"))
+        self.serv = GasServer(address=f"tcp://*:{port}", host="", data={}, name="gas pressure")
+        self.serv.start()
 
         # 5. Connect thread signals
         self.threadFlow.MEAS.connect(self.aff)
+        self.threadFlow.MEAS.connect(self.updateServ)
         self.threadFlow.VALVE1_MEAS.connect(self.update_inlet_valve_display)
         self.threadFlow.DEBUG_MEAS.connect(self.update_debug_display)
         self.threadFlow.MEAS.connect(self.plot_window.update_plot)
@@ -1358,8 +1363,14 @@ class Bronkhost(QMainWindow):
         elif self.valve_status == "Closed":
             self.label_win.valve_status.setText('Shut')
 
+    def updateServ(self, timestamp, pressure):
+        # print(f"the pressure mesurea is: {pressure}")
+        data = {"shootNumber": 0, "stabilized": False, "data": pressure, "unit": "bar"}
+        self.serv.setData(data)
+        # print("Server updated.")
 
     def closeEvent(self, event):
+        self.serv.stop()
         # Disconnect the signal to prevent it from firing during shutdown.
         self.win.setpoint.editingFinished.disconnect(self.setPoint)
         print("Closing application...")
