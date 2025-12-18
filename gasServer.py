@@ -204,7 +204,7 @@ if __name__ == "__main__":
     # port = cfg["diagServer"].get("serverPort")
 
     address = f"tcp://*:1234"
-    data = {"hello": "world", "x": 42}
+    data = {"hello": "world", "positions": [42.], "unit": "bar"}
     # print(f"host = {host}")
     # print(f"port = {port}")
     # print(f"address = {address}")
