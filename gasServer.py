@@ -203,7 +203,7 @@ if __name__ == "__main__":
     # host = cfg["diagServer"].get("serverHost")
     # port = cfg["diagServer"].get("serverPort")
 
-    address = f"tcp://*:1234"
+    address = f"tcp://*:1110"
     data = {"hello": "world", "positions": [42.], "unit": "bar"}
     # print(f"host = {host}")
     # print(f"port = {port}")
