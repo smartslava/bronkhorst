@@ -29,7 +29,8 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 import configparser
 
-from gasServer import GasServer
+from server_lhc.serverLHC import ServerLHC
+from server_lhc.protocol import DEVICE_GAS
 
 def load_configuration():
     config = configparser.ConfigParser()
@@ -505,7 +506,13 @@ class Bronkhost(QMainWindow):
         #self.threadFlow = THREADFlow(self, capacity=self.capacity)
         self.threadFlow.start()
         port = str(self.config["Server"].get("port", "0123"))
-        self.serv = GasServer(address=f"tcp://*:{port}", host="", data={}, name="gas pressure")
+        self.serv = ServerLHC(
+            name="GAS 1",
+            address=f"tcp://*:{port}",
+            freedom=1,
+            device=DEVICE_GAS,
+            data={}
+        )
         self.serv.start()
 
         # 5. Connect thread signals
@@ -1364,11 +1371,14 @@ class Bronkhost(QMainWindow):
             self.label_win.valve_status.setText('Shut')
 
     def updateServ(self, timestamp, pressure):
-        # print(f"the pressure mesurea is: {pressure}")
-        data = {"shootNumber": 0, "stabilized": False, "data": pressure, "unit": "bar"}
-        self.serv.setData(data)
-        # print("Server updated.")
-
+        payload = {
+            "shootNumber": 0, 
+            "stabilized": False,
+            "positions": [pressure], 
+            "unit": "bar"
+        }
+        self.serv.set_data(payload)
+    
     def closeEvent(self, event):
         self.serv.stop()
         # Disconnect the signal to prevent it from firing during shutdown.
