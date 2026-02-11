@@ -526,7 +526,7 @@ class Bronkhost(QMainWindow):
         self.threadFlow.start()
         port = str(self.config["Server"].get("port", "0123"))
         self.serv = ServerLHC(
-            name="GAS 1",
+            name=f"GAS {self.win.user_tag_label.text()}",
             address=f"tcp://*:{port}",
             freedom=1,
             device=DEVICE_GAS,
