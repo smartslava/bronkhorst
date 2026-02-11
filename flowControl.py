@@ -536,7 +536,7 @@ class Bronkhost(QMainWindow):
 
         # 5. Connect thread signals
         self.threadFlow.MEAS.connect(self.aff)
-        self.threadFlow.MEAS.connect(self.updateServ)
+        self.threadFlow.MEAS.connect(self.updateServer)
         self.threadFlow.VALVE1_MEAS.connect(self.update_inlet_valve_display)
         self.threadFlow.DEBUG_MEAS.connect(self.update_debug_display)
         self.threadFlow.MEAS.connect(self.plot_window.update_plot)
@@ -1389,7 +1389,7 @@ class Bronkhost(QMainWindow):
         elif self.valve_status == "Closed":
             self.label_win.valve_status.setText('Shut')
 
-    def updateServ(self, timestamp, pressure):
+    def updateServer(self, timestamp, pressure):
         payload = {
             "shootNumber": 0, 
             "stabilized": False,
