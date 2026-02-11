@@ -6,7 +6,8 @@ import qtpy
 Created on Wed Jun 21 15:26:36 2023
 @author: SALLEJAUNE & Slava Smartsev
 """
-__version__ = "1.2.1-beta"
+__version__ = "1.3.0-beta"
+import logging
 import pathlib, os
 os.environ['QT_API'] = 'pyqt6'
 from admin_window import AdminWindow
@@ -28,6 +29,23 @@ from collections import deque
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 import configparser
+
+from laplace_server.server_lhc import ServerLHC
+from laplace_server.protocol import DEVICE_GAS
+
+from laplace_log import LoggerLHC, log
+from laplace_server.protocol import LOGGER_NAME
+
+LoggerLHC("laplace.gas", file_level="debug", console_level="info")
+log.info("Starting flowControl...")
+
+# set log level for libraries
+logging.getLogger(LOGGER_NAME).setLevel(logging.INFO)
+logging.getLogger("PyQt6.uic.properties").setLevel(logging.INFO)
+logging.getLogger("PyQt6.uic.uiparser").setLevel(logging.INFO)
+
+
+from qt_logging_bridge import QtLogHandler
 
 
 def load_configuration():
@@ -60,10 +78,10 @@ def load_configuration():
     # Load the file
     # Read from the absolute path
     if os.path.exists(config_path):
-        print(f"Loading config from: {config_path}")  # Debug print
+        log.info(f"Loading config from: {config_path}")  # Debug print
         config.read(config_path)
     else:
-        print(f"Config not found at {config_path}, creating defaults.")
+        log.warning(f"Config not found at {config_path}, creating defaults.")
         config.read_dict(defaults)
         with open(config_path, 'w') as f:
             config.write(f)
@@ -333,7 +351,7 @@ class Bronkhost(QMainWindow):
         if com is None:
             # If no port was given, maybe pop up the selection dialog right here!
             # Or print an error, etc.
-            print("Error: No COM port was provided.")
+            log.error("Error: No COM port was provided.")
             return  # Stop initialization
 
         self.config = config  # Store config for later use
@@ -388,30 +406,33 @@ class Bronkhost(QMainWindow):
         self.purge_start_time = 0.0
 
         # --- REDIRECT PRINT STATEMENTS ---
-        self.log_stream = Stream()
-        self.log_stream.new_text.connect(self.update_log)
-        sys.stdout = self.log_stream
-        print(f"--- LOA Pressure Control v{__version__} ---")
+        # self.log_stream = Stream()
+        # self.log_stream.new_text.connect(self.update_log)
+        # sys.stdout = self.log_stream
+        qt_handler = QtLogHandler()
+        logging.getLogger().addHandler(qt_handler)
+        qt_handler.new_log.connect(self.update_log)
+        log.info(f"  LOA Pressure Control v{__version__}  ")
 
         try:
             self.instrument = propar.instrument(com)
             device_serial = self.instrument.readParameter(1)  # Try to read the serial number
             if device_serial is None:
                 raise ConnectionError("Device is not responding on this port.")
-            print(f"Successfully connected to device with serial number: {device_serial}")
+            log.info(f"Successfully connected to device with serial number: {device_serial}")
             self.connection_successful = True
 
-            print("Reading initial device status...")
+            log.info("Reading initial device status...")
             initial_status = self.instrument.readParameter(28)
             if initial_status is not None:
                 binary_string = bin(initial_status)[2:].zfill(8)
-                print(f"Initial device status (param 28): Value={initial_status}, Bits={binary_string}")
+                log.info(f"Initial device status (param 28): Value={initial_status}, Bits={binary_string}")
             else:
-                print("Could not read initial device status.")
+                log.warning("Could not read initial device status.")
 
         except Exception as e:
             # If connection fails, show an error
-            print("Failed")
+            log.error("Connection Failed")
             QMessageBox.critical(self, "Connection Error",
                                  f"Failed to connect to {com}.\n\nError: {e}\n\nPlease check connection or try another port.")
             return
@@ -458,11 +479,11 @@ class Bronkhost(QMainWindow):
         except KeyError:
             # Fallback if [Thread] section is missing entirely in the file
             thread_time = 0.2
-            print("Warning: [Thread] section missing in config, using default 0.2 s")
+            log.warning("Warning: [Thread] section missing in config, using default 0.2 s")
 
-        print(f"Refresh thread_time loaded: {thread_time}")
+        log.info(f"Refresh thread_time loaded: {thread_time}")
         max_possible_seconds = hist * thread_time
-        print(f"Buffer Capacity: {max_possible_seconds:.1f} seconds")
+        log.info(f"Buffer Capacity: {max_possible_seconds:.1f} seconds")
 
         # 3. Initialize PlotWindow
         # We read the default duration, but we cap it immediately to be safe
@@ -503,9 +524,19 @@ class Bronkhost(QMainWindow):
         self.threadFlow = THREADFlow(self, capacity=self.capacity, thread_sleep_time=thread_time)
         #self.threadFlow = THREADFlow(self, capacity=self.capacity)
         self.threadFlow.start()
+        port = str(self.config["Server"].get("port", "0123"))
+        self.serv = ServerLHC(
+            name=f"GAS {self.win.user_tag_label.text()}",
+            address=f"tcp://*:{port}",
+            freedom=1,
+            device=DEVICE_GAS,
+            data={}
+        )
+        self.serv.start()
 
         # 5. Connect thread signals
         self.threadFlow.MEAS.connect(self.aff)
+        self.threadFlow.MEAS.connect(self.updateServer)
         self.threadFlow.VALVE1_MEAS.connect(self.update_inlet_valve_display)
         self.threadFlow.DEBUG_MEAS.connect(self.update_debug_display)
         self.threadFlow.MEAS.connect(self.plot_window.update_plot)
@@ -517,7 +548,7 @@ class Bronkhost(QMainWindow):
     def reset_alarm_cmd(self):
         """Sends the sequence to reset the instrument alarm."""
         try:
-            print("Sending Alarm Reset Command...")
+            log.debug("Sending Alarm Reset Command...")
             # Good practice: Send 0 first to clear previous commands
             self.instrument_mutex.lock()  # <--- Lock
             try:
@@ -531,9 +562,9 @@ class Bronkhost(QMainWindow):
             finally:
                 self.instrument_mutex.unlock()  # <--- Unlock
 
-            print("Alarm Reset Sent.")
+            log.debug("Alarm Reset Sent.")
         except Exception as e:
-            print(f"Failed to reset alarm: {e}")
+            log.error(f"Failed to reset alarm: {e}")
 
     def handle_critical_alarm(self, alarm_code):
         """
@@ -555,7 +586,7 @@ class Bronkhost(QMainWindow):
             return
 
         self.alarm_popup_active = True
-        print(f"CRITICAL ALARM {alarm_code}: Executing AUTO-SAFETY sequence.")
+        log.error(f"CRITICAL ALARM {alarm_code}: Executing AUTO-SAFETY sequence.")
 
         # ----------------------------------------------------------
         # STEP 1: IMMEDIATE ACTIONS
@@ -579,7 +610,7 @@ class Bronkhost(QMainWindow):
         #   2. Send Setpoint 0.0 bar
         #   3. Switch to PID
         #   4. Start the 200ms loop to check for 0 bar OR timeout
-        print("Transferring control to Purge Logic...")
+        log.info("Transferring control to Purge Logic...")
         self.purge_system()
 
         # D. Update Cooldown Tracker
@@ -631,7 +662,7 @@ class Bronkhost(QMainWindow):
         # --- OFFLINE STATE ---
         if normalized_status == 'offline':
             if not self.is_offline:
-                print("Connection to device lost...")
+                log.warning("Connection to device lost...")
                 self.is_offline = True
             self.win.device_status_label.setText("Offline")
 
@@ -671,11 +702,11 @@ class Bronkhost(QMainWindow):
             # *** FIX: Reset the offline flag immediately ***
             if self.is_offline:
                 self.is_offline = False
-                print("Device back online. Resetting offline status.")
+                log.info("Device back online. Resetting offline status.")
 
             # Only trigger the refresh once per transition
             if self._last_status != "normal":
-                print("Device status back to Normal — refreshing device info...")
+                log.info("Device status back to Normal — refreshing device info...")
 
                 # Resynchronize Setpoint only if plot_window is initialized
                 if self.plot_window is not None:
@@ -693,7 +724,7 @@ class Bronkhost(QMainWindow):
                         if hasattr(self.win, 'inlet_valve_label'):
                             self.win.inlet_valve_label.setText("...")
                 except Exception as e:
-                    print(f"Failed to perform valve read on reconnect: {e}")
+                    log.error(f"Failed to perform valve read on reconnect: {e}")
                     if hasattr(self.win, 'inlet_valve_label'):
                         self.win.inlet_valve_label.setText("...")
 
@@ -774,11 +805,12 @@ class Bronkhost(QMainWindow):
 
     def update_log(self, text):
         """Appends text to the QTextEdit."""
-        cursor = self.win.log_display.textCursor()
-        cursor.movePosition(cursor.End)
-        cursor.insertText(text)
-        self.win.log_display.setTextCursor(cursor)
-        self.win.log_display.ensureCursorVisible()
+        self.win.log_display.append(text)
+        # cursor = self.win.log_display.textCursor()
+        # cursor.movePosition(cursor.End)
+        # cursor.insertText(text)
+        # self.win.log_display.setTextCursor(cursor)
+        # self.win.log_display.ensureCursorVisible()
 
     def actionButton(self):
         self.mode_group.buttonClicked.connect(self.on_mode_changed)
@@ -803,7 +835,7 @@ class Bronkhost(QMainWindow):
             display_text = str(tag_string).strip() or "—"
             self.win.user_tag_label.setText(display_text)
         except Exception as e:
-            print(f"Failed to update user tag label: {e}")
+            log.error(f"Failed to update user tag label: {e}")
 
     def _setPlotDuration(self):
         """
@@ -816,7 +848,7 @@ class Bronkhost(QMainWindow):
         # Read the integer value from the spin box
         new_duration_int = self.win.plot_duration_spinbox.value()
 
-        print(f"Plot duration set to: {new_duration_int} seconds (applied on finish)")
+        log.debug(f"Plot duration set to: {new_duration_int} seconds (applied on finish)")
 
         # Pass the value (as float) to the PlotWindow method
         self.plot_window.set_max_duration(float(new_duration_int))
@@ -834,7 +866,7 @@ class Bronkhost(QMainWindow):
 
         # Check if the user clicked "OK" and if the password is correct
         if ok and password == CORRECT_PASSWORD:
-            print("Password correct. Opening admin panel.")
+            log.debug("Password correct. Opening admin panel.")
 
             # We store the window as an attribute of the main class
             # to prevent it from being garbage collected and disappearing.
@@ -875,7 +907,7 @@ class Bronkhost(QMainWindow):
 
             if capacity is not None:
                 self.capacity = float(capacity)
-                print(f"Device Capacity Read: {self.capacity}")
+                log.info(f"Device Capacity Read: {self.capacity}")
 
                 # Default to a high number (or self.capacity) if missing in config
                 safety_limit = self.config['Safety'].getfloat('max_set_pressure', self.capacity)
@@ -884,24 +916,24 @@ class Bronkhost(QMainWindow):
                 # It is the LOWER of the physical device limit and the config safety limit
                 effective_max = min(self.capacity, safety_limit)
 
-                print(f"Safety Limit: {safety_limit} | Effective UI Max: {effective_max}")
+                log.info(f"Safety Limit: {safety_limit} | Effective UI Max: {effective_max}")
                 # --- Configure the setpoint box's range and precision ---
                 if hasattr(self.win, 'setpoint'):
                     self.win.setpoint.setMaximum(effective_max)
                     self.win.setpoint.setDecimals(2)
                     self.win.setpoint.setToolTip(f"Config limited to {effective_max} (Physical: {self.capacity})")
             else:
-                print("Warning: Could not read device capacity (param 21).")
+                log.warning("Warning: Could not read device capacity (param 21).")
 
             if unit is not None:
                 self.unit = str(unit).strip()  # .strip() removes leading/trailing whitespace
-                print(f"Device Unit Read: '{self.unit}'")
+                log.info(f"Device Unit Read: '{self.unit}'")
                 # --- Set the dedicated unit label ---
                 if hasattr(self.win, 'unit_label'):
                     self.win.unit_label.setText(self.unit)
                     self.win.unit_label.setStyleSheet("font-size: 16pt; color: white;")
             else:
-                print("Warning: Could not read device unit (param 129).")
+                log.warning("Warning: Could not read device unit (param 129).")
 
             if user_tag_raw is not None:
                 if isinstance(user_tag_raw, (bytes, bytearray)):
@@ -928,7 +960,7 @@ class Bronkhost(QMainWindow):
                 if self.plot_window is not None:
                     self.plot_window.update_title(user_tag)
         except Exception as e:
-            print(f"Error reading device info: {e}")
+            log.error(f"Error reading device info: {e}")
 
     def configure_response_alarm(self):
         """
@@ -938,7 +970,7 @@ class Bronkhost(QMainWindow):
         if self.is_offline:
             return
         try:
-            print("--- Loading Config of Response Alarm ---")
+            log.info("  Loading Config of Response Alarm  ")
 
             # 1. Read the Enable Flag
             enable_flag = self.config['Safety'].getboolean('set_point_above_safety_enable', True)
@@ -947,18 +979,17 @@ class Bronkhost(QMainWindow):
             # 2. Read Configuration Values
             tol_bar = self.config['Safety'].getfloat('set_point_above_tolerance', 2.0)
             self.safety_tolerance_bar = tol_bar
-            print(f"Pressure tolerance: {tol_bar} bars")
+            log.info(f"Pressure tolerance: {tol_bar} bars")
             delay_sec = self.config['Safety'].getint('set_point_above_delay', 2)
-            print(f"Alarm activation delay: {delay_sec} s")
+            log.info(f"Alarm activation delay: {delay_sec} s")
             # --- Read Cooldown Delay  ---
             self.lower_setpoint_cooldown = self.config['Safety'].getfloat('set_point_lower_cooldown_delay', 2.0)
-            print(f"Lower Setpoint Cooldown: {self.lower_setpoint_cooldown} s")
+            log.info(f"Lower Setpoint Cooldown: {self.lower_setpoint_cooldown} s")
             # ---  Purge Settings Here ---
             self.purge_timeout_limit = self.config['Safety'].getfloat('purge_shut_delay_timeout', 5.0)
-            print(f"Purge delay timeout={self.purge_timeout_limit} s")
-            print("------")
+            log.info(f"Purge delay timeout={self.purge_timeout_limit} s")
             self.purge_target = 0.0  # Hardcoded target
-            print(f"Hardcoded Purge setpoint={self.purge_target} bar")
+            log.info(f"Hardcoded Purge setpoint={self.purge_target} bar")
 
             # 3. Calculate Device Integers (0-32000)
 
@@ -974,9 +1005,9 @@ class Bronkhost(QMainWindow):
             # Safe Setpoint Integer
             safe_setpoint_int = self.bar_to_propar(safe_pressure_bar, self.capacity)
 
-            print(f"Response Alarm Enable = {self.response_alarm_enabled}")
-            print(f"Tolerance: {tol_bar} bar (Int: {dev_above_int})")
-            print(f"Safe State: {safe_pressure_bar} bar (Int: {safe_setpoint_int})")
+            log.info(f"Response Alarm Enable = {self.response_alarm_enabled}")
+            log.info(f"Tolerance: {tol_bar} bar (Int: {dev_above_int})")
+            log.info(f"Safe State: {safe_pressure_bar} bar (Int: {safe_setpoint_int})")
 
             # 4. Send Configuration
             self.instrument_mutex.lock()  # <--- Lock
@@ -991,7 +1022,7 @@ class Bronkhost(QMainWindow):
 
                 self.instrument_mutex.unlock()  # <--- Unlock
         except Exception as e:
-            print(f"Error configuring alarms: {e}")
+            log.error(f"Error configuring alarms: {e}")
 
 
     def read_initial_setpoint(self):
@@ -1032,7 +1063,7 @@ class Bronkhost(QMainWindow):
 
         # --- NEW: If user manually changes mode, cancel any active purge ---
         if self.is_purging:
-            print("Manual Override: Cancelling Purge Sequence.")
+            log.warning("Manual Override: Cancelling Purge Sequence.")
             self.is_purging = False
             if self.purge_check_timer.isActive():
                 self.purge_check_timer.stop()
@@ -1050,7 +1081,7 @@ class Bronkhost(QMainWindow):
         3. Start a timer that checks if we reached target OR if timeout occurred.
         """
         if self.is_offline or not self.connection_successful:
-            print("Purge skipped: Device is offline.")
+            log.info("Purge skipped: Device is offline.")
             return
 
         # *** FIX: UNINDENTED THIS BLOCK ***
@@ -1062,12 +1093,12 @@ class Bronkhost(QMainWindow):
             self.instrument_mutex.lock()
             self.instrument.writeParameter(118, 0)
         except Exception as e:
-            print(f"Error disabling alarm for purge: {e}")
+            log.error(f"Error disabling alarm for purge: {e}")
         finally:
             self.instrument_mutex.unlock()
         # -----------------------------------
 
-        print(f"--- Purge Initiated: Target={self.purge_target} bar, Max Wait={self.purge_timeout_limit}s ---")
+        log.info(f"  Purge Initiated: Target={self.purge_target} bar, Max Wait={self.purge_timeout_limit}s  ")
 
         # 2. Update UI and Send Setpoint
         self.win.setpoint.setValue(self.purge_target)
@@ -1095,12 +1126,12 @@ class Bronkhost(QMainWindow):
 
         # 1. SUCCESS CONDITION: Pressure is within tolerance
         if current_diff <= TOLERANCE:
-            print(f"Purge Target Reached! (Diff: {current_diff:.4f} bar). Closing.")
+            log.info(f"Purge Target Reached! (Diff: {current_diff:.4f} bar). Closing.")
             self._finalize_purge()
 
         # 2. TIMEOUT CONDITION: Time exceeded limit
         elif elapsed >= self.purge_timeout_limit:
-            print(f"Purge Timeout ({elapsed:.1f}s > {self.purge_timeout_limit}s). Forcing Close.")
+            log.info(f"Purge Timeout ({elapsed:.1f}s > {self.purge_timeout_limit}s). Forcing Close.")
             self._finalize_purge()
 
         # 3. Otherwise, do nothing and wait for next timer tick
@@ -1113,7 +1144,7 @@ class Bronkhost(QMainWindow):
         if self.purge_check_timer.isActive():
             self.purge_check_timer.stop()
         self.is_purging = False
-        print("Purge Sequence Complete. Closing valves.")
+        log.info("Purge Sequence Complete. Closing valves.")
 
         # Close the valve
         self.valve_close()
@@ -1128,7 +1159,7 @@ class Bronkhost(QMainWindow):
         """
         if self.response_alarm_enabled:
             try:
-                print(f"Safety Wait Period: Disabling alarm for {self.lower_setpoint_cooldown}s...")
+                log.info(f"Safety Wait Period: Disabling alarm for {self.lower_setpoint_cooldown}s...")
 
                 # 1. Disable Alarm (Mode 0) immediately
 
@@ -1143,7 +1174,7 @@ class Bronkhost(QMainWindow):
                 self.rearm_timer.start(int(self.lower_setpoint_cooldown * 1000))
 
             except Exception as e:
-                print(f"Error triggering alarm cooldown: {e}")
+                log.error(f"Error triggering alarm cooldown: {e}")
 
     def _handle_setpoint_safety_logic(self, new_bar_setpoint):
         """
@@ -1159,12 +1190,12 @@ class Bronkhost(QMainWindow):
             alarm_threshold = new_bar_setpoint + self.safety_tolerance_bar
 
             if self.current_pressure_bar > alarm_threshold:
-                print(f"PID Safety: Pressure ({self.current_pressure_bar:.2f}) > "
+                log.info(f"PID Safety: Pressure ({self.current_pressure_bar:.2f}) > "
                       f"Limit ({alarm_threshold:.2f}). Triggering cooldown.")
                 self._trigger_alarm_cooldown()
 
     def valve_PID(self, force_cooldown=False):
-        print('Valve PID controlled')
+        log.info('Valve PID controlled')
 
         # 1. Update UI Visuals
         self.flicker_timer.stop()
@@ -1195,13 +1226,13 @@ class Bronkhost(QMainWindow):
 
             # Case A: Purge Requested (Always force cooldown)
             if force_cooldown:
-                print("Entering PID (Forced): Triggering Cooldown.")
+                log.warning("Entering PID (Forced): Triggering Cooldown.")
                 self._trigger_alarm_cooldown()
 
             # Case B: Smart Safety Check
             # Only disable alarm if pressure is actually high enough to trigger it
             elif self.current_pressure_bar > alarm_threshold:
-                print(f"Entering PID: Pressure ({self.current_pressure_bar:.2f}) > "
+                log.info(f"Entering PID: Pressure ({self.current_pressure_bar:.2f}) > "
                       f"Limit ({alarm_threshold:.2f}). Triggering Cooldown.")
                 self._trigger_alarm_cooldown()
 
@@ -1213,9 +1244,9 @@ class Bronkhost(QMainWindow):
                         self.instrument.writeParameter(118, 2)
                     finally:
                         self.instrument_mutex.unlock()
-                    print("Safety alarm: ENABLED (Mode 2) - Immediate")
+                    log.info("Safety alarm: ENABLED (Mode 2) - Immediate")
                 except Exception as e:
-                    print(f"Failed to enable alarm: {e}")
+                    log.error(f"Failed to enable alarm: {e}")
 
         # 4. Attempt to read the new valve value
         time.sleep(0.1)
@@ -1233,12 +1264,12 @@ class Bronkhost(QMainWindow):
                 if hasattr(self.win, 'inlet_valve_label'):
                     self.win.inlet_valve_label.setText("...")
         except Exception as e:
-            print(f"Failed to perform initial valve read: {e}")
+            log.error(f"Failed to perform initial valve read: {e}")
             if hasattr(self.win, 'inlet_valve_label'):
                 self.win.inlet_valve_label.setText("...")
 
     def valve_close(self):
-        print('Valve closed')
+        log.info('Valve closing')
         self.win.label_valve_status.setText('Shut')
         #self.win.closeButton.setStyleSheet("background-color: red")
         #self.win.openButton.setStyleSheet("background-color: gray")
@@ -1257,9 +1288,9 @@ class Bronkhost(QMainWindow):
                 self.instrument.writeParameter(118, 0)
             finally:
                 self.instrument_mutex.unlock()
-            print("Safety Alarm: DISABLED (Mode 0)")
+            log.info("Safety Alarm: DISABLED (Mode 0)")
         except Exception as e:
-            print(f"Failed to disable alarm: {e}")
+            log.error(f"Failed to disable alarm: {e}")
         # --------------------------
 
         if hasattr(self.win, 'inlet_valve_label'):
@@ -1271,14 +1302,14 @@ class Bronkhost(QMainWindow):
     def setPoint(self):
         # *** Guard against running while offline ***
         if self.is_offline or not self.connection_successful:
-            print("Set point skipped: Device is offline.")
+            log.info("Set point skipped: Device is offline.")
             return
 
         bar_setpoint = self.win.setpoint.value()
 
         self._handle_setpoint_safety_logic(bar_setpoint)
 
-        print(f"Bar setpoint set to: {bar_setpoint} {self.unit}")
+        log.info(f"Bar setpoint set to: {bar_setpoint} {self.unit}")
         self.plot_window.set_setpoint_value(bar_setpoint)
 
         if self.capacity > 0:
@@ -1292,7 +1323,7 @@ class Bronkhost(QMainWindow):
             finally:
                 self.instrument_mutex.unlock()
         else:
-            print("Warning: Cannot set point, device capacity is unknown or zero.")
+            log.warning("Warning: Cannot set point, device capacity is unknown or zero.")
 
     def _reenable_alarm(self):
         """
@@ -1312,7 +1343,7 @@ class Bronkhost(QMainWindow):
 
             # If we are still above that limit, DO NOT enable alarm. Wait again.
             if self.current_pressure_bar > current_limit:
-                print(f"Cooldown Check: Pressure ({self.current_pressure_bar:.2f}) > "
+                log.info(f"Cooldown Check: Pressure ({self.current_pressure_bar:.2f}) > "
                       f"Limit ({current_limit:.2f}). Extending wait...")
 
                 # Restart the timer for another cycle (e.g. another 5 seconds)
@@ -1322,14 +1353,14 @@ class Bronkhost(QMainWindow):
             # -------------------
 
             try:
-                print("Cooldown finished & Pressure Safe: Re-enabling Safety Alarm (Mode 2)")
+                log.info("Cooldown finished & Pressure Safe: Re-enabling Safety Alarm (Mode 2)")
                 self.instrument_mutex.lock()
                 try:
                     self.instrument.writeParameter(118, 2)
                 finally:
                     self.instrument_mutex.unlock()
             except Exception as e:
-                print(f"Failed to re-enable alarm: {e}")
+                log.error(f"Failed to re-enable alarm: {e}")
 
     def update_inlet_valve_display(self, raw_value):
         if self.valve_status != "closed":
@@ -1358,11 +1389,20 @@ class Bronkhost(QMainWindow):
         elif self.valve_status == "Closed":
             self.label_win.valve_status.setText('Shut')
 
-
+    def updateServer(self, timestamp, pressure):
+        payload = {
+            "shootNumber": 0, 
+            "stabilized": False,
+            "positions": [pressure], 
+            "unit": "bar"
+        }
+        self.serv.set_data(payload)
+    
     def closeEvent(self, event):
+        self.serv.stop()
         # Disconnect the signal to prevent it from firing during shutdown.
         self.win.setpoint.editingFinished.disconnect(self.setPoint)
-        print("Closing application...")
+        log.info("Closing application...")
 
         if hasattr(self, 'plot_window'):
             self.plot_window.close()
@@ -1381,11 +1421,11 @@ class Bronkhost(QMainWindow):
                 self.instrument_mutex.lock()
                 try:
                     self.instrument.writeParameter(12, 3)
-                    print("Closing valve...")
+                    log.info("Closing valve...")
                     self.win.label_valve_status.setText('Shut')
                     time.sleep(0.5)
                     self.instrument.master.propar.stop()
-                    print("Connection closed.")
+                    log.info("Connection closed.")
                 finally:
                     self.instrument_mutex.unlock()
         event.accept()
@@ -1482,7 +1522,7 @@ class THREADFlow(QtCore.QThread):
                 if alarm_status is not None:
                     # DEBUG: Print only if status changes or is critical
                     if alarm_status != last_alarm_status:
-                        print(f" [ALARM CHANGE] Status Code: {alarm_status} (Binary: {bin(alarm_status)})")
+                        log.debug(f" [ALARM CHANGE] Status Code: {alarm_status} (Binary: {bin(alarm_status)})")
                         last_alarm_status = alarm_status
 
                     if alarm_status & 1:
@@ -1510,7 +1550,7 @@ class THREADFlow(QtCore.QThread):
                 # 1. Calculate how long the read/emit process took
                 work_duration = time.time() - loop_start_time
                 # 4. PRINT IT (Temporary Debug)
-                #print(f"Hardware IO took: {work_duration:.4f} seconds")
+                # log.debug(f"Hardware IO took: {work_duration:.4f} seconds")
                 # 2. Calculate remaining time to match the configured thread_sleep_time
                 sleep_time = self.thread_sleep_time - work_duration
 
@@ -1522,11 +1562,11 @@ class THREADFlow(QtCore.QThread):
 
             except Exception as e:
                 self.DEVICE_STATUS_UPDATE.emit('offline')
-                print(f"Error reading from instrument: {e}")
+                log.error(f"Error reading from instrument: {e}")
                 # On exception, wait a safe fixed amount before retrying
                 time.sleep(2.0)
 
-        print('Measurement thread stopped.')
+        log.info('Measurement thread stopped.')
 
     def stopThread(self):
         self.stop = True
@@ -1563,7 +1603,7 @@ if __name__ == '__main__':
         )
 
         if ok and selected_port:
-            print(f"Attempting to connect to {selected_port}...")
+            log.info(f"Attempting to connect to {selected_port}...")
             # Create a temporary instance to check the connection
             main_window = Bronkhost(com=selected_port, config=APP_CONFIG)
             #main_window = Bronkhost(com=selected_port,name="LOA Pressure Control")
@@ -1582,10 +1622,10 @@ if __name__ == '__main__':
 
     # The loop is finished, now we check if we have a valid window
     if main_window and main_window.connection_successful:
-        print("Connection established. Starting application.")
+        log.info("Connection established. Starting application.")
         main_window.show()
         appli.exec_()
     else:
-        print("No valid port selected. Exiting application.")
+        log.info("No valid port selected. Exiting application.")
         sys.exit()
 
